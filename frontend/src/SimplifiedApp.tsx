@@ -111,14 +111,35 @@ function SimplifiedApp() {
     };
   }, []);
 
-  const handleSetProfile = async (formData: Profile) => {
+  const handleSetProfile = async (formData: any) => {
     try {
       setIsLoading(true);
       setError('');
-      await apiClient.setProfile(formData);
-      setProfile(formData);
+      
+      console.log('Form data received:', formData);
+      
+      // Transform form data to match backend expectations
+      const profileData = {
+        candidateName: formData.candidateName,
+        experienceYears: formData.experienceYears,
+        currentCompany: formData.currentCompany || '',
+        currentRole: formData.currentRole || formData.targetRole || '',
+        previousCompany: formData.previousCompany || '',
+        previousRole: formData.previousRole || '',
+        targetCompany: formData.targetCompany || '',
+        jobTitle: formData.jobTitle || '',
+        interviewRound: formData.interviewRound || 'Technical Round 1',
+        resumeText: formData.resumeText || '',
+        jobDescriptionText: formData.jobDescriptionText || ''
+      };
+      
+      console.log('Profile data to send:', profileData);
+      
+      await apiClient.setProfile(profileData);
+      setProfile(profileData);
       setShowSetup(false);
     } catch (err: any) {
+      console.error('Error setting profile:', err);
       setError(err.message || 'Failed to set profile');
     } finally {
       setIsLoading(false);
@@ -509,6 +530,9 @@ function SimplifiedApp() {
                 <option value="HR Round">HR Round</option>
                 <option value="Managerial Round">Managerial Round</option>
                 <option value="System Design Round">System Design Round</option>
+                <option value="Data Science Round">Data Science Round</option>
+                <option value="DevOps Round">DevOps Round</option>
+                <option value="QA Round">QA Round</option>
               </select>
             </div>
 
@@ -519,7 +543,7 @@ function SimplifiedApp() {
                 required
                 rows={6}
                 className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Paste your full resume text here..."
+                placeholder="Paste your full resume text here (projects, technologies, experience)..."
               />
             </div>
 

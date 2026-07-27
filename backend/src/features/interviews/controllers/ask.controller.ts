@@ -29,13 +29,6 @@ let currentProfile: Profile | null = null;
 // In-memory conversation history for context
 let conversationHistory: Array<{role: 'user' | 'assistant', content: string}> = [];
 
-// Known project names from resume for tracking (no placeholders)
-const KNOWN_PROJECTS = [
-  "Employee Management",
-  "E-Commerce", 
-  "Loan Management"
-];
-
 /**
  * Cleanup function to replace banned words with simpler alternatives
  * Uses word boundaries (\b) and case-insensitive matching to avoid breaking words
@@ -66,6 +59,106 @@ function cleanupBannedWords(answer: string): string {
     cleanedAnswer = cleanedAnswer.replace(regex, replacement);
   }
   
+  return cleanedAnswer;
+}
+
+/**
+ * Cleanup function to fix 'you' POV mistakes that slip through
+ * Uses regex patterns to catch common 'you' leak patterns and auto-correct them
+ * These are generic grammar patterns, not tied to specific tech domains
+ */
+function cleanupYouPOVMistakes(answer: string): string {
+  const youFixes: [RegExp, string][] = [
+    // Generic possessive patterns (domain-agnostic)
+    [/\byour service\b/gi, "the service"],
+    [/\byour system\b/gi, "the system"],
+    [/\byour application\b/gi, "the application"],
+    [/\byour app\b/gi, "the app"],
+    [/\byour project\b/gi, "the project"],
+    [/\byour code\b/gi, "the code"],
+    [/\byour data\b/gi, "the data"],
+    [/\byour database\b/gi, "the database"],
+    [/\byour server\b/gi, "the server"],
+    [/\byour machine\b/gi, "the machine"],
+    [/\byour environment\b/gi, "the environment"],
+    [/\byour setup\b/gi, "the setup"],
+    [/\byour configuration\b/gi, "the configuration"],
+    [/\byour infrastructure\b/gi, "the infrastructure"],
+    [/\byour pipeline\b/gi, "the pipeline"],
+    [/\byour workflow\b/gi, "the workflow"],
+    [/\byour team\b/gi, "the team"],
+    [/\byour organization\b/gi, "the organization"],
+    [/\byour company\b/gi, "the company"],
+    
+    // Generic verb patterns (domain-agnostic)
+    [/\byou'd\b/gi, "we'd"],
+    [/\byou can set up\b/gi, "we can set up"],
+    [/\byou can specify\b/gi, "we can specify"],
+    [/\byou can access\b/gi, "we can access"],
+    [/\bwe can access\b/gi, "the service can be accessed"],
+    [/\byou can\b/gi, "we can"],
+    [/\bhow you connect\b/gi, "how we connect"],
+    [/\bthat's how you\b/gi, "that's how we"],
+    [/\byou would use\b/gi, "we would use"],
+    [/\byou need to\b/gi, "we need to"],
+    [/\byou need\b/gi, "we need"],
+    [/\byou're\b/gi, "we're"],
+    [/\byou have\b/gi, "we have"],
+    [/\byou get\b/gi, "we get"],
+    [/\byou use\b/gi, "we use"],
+    [/\byou gotta\b/gi, "we gotta"],
+    [/\byou generate\b/gi, "we generate"],
+    [/\byou generated\b/gi, "we generated"],
+    [/\bfirst you need\b/gi, "first we need"],
+    [/\bfirst you\b/gi, "first we"],
+    [/\bwhen you want\b/gi, "when we want"],
+    [/\bwhen you need\b/gi, "when we need"],
+    [/\bwhat you're trying\b/gi, "what we're trying"],
+    [/\bwalk you through\b/gi, "walk through"],
+    [/\bhelp you understand\b/gi, "help understand"],
+    [/\bshow you\b/gi, "show"],
+    [/\btell you\b/gi, "tell"],
+    // Catch patterns where 'you' is used as subject in explanations
+    [/\byou want to\b/gi, "we want to"],
+    [/\byou want\b/gi, "we want"],
+    [/\byou don't\b/gi, "we don't"],
+    [/\byou do\b/gi, "we do"],
+    [/\byou should\b/gi, "we should"],
+    [/\byou must\b/gi, "we must"],
+    [/\byou will\b/gi, "we will"],
+    [/\byou'll\b/gi, "we'll"],
+    // Catch additional patterns
+    [/\bonce you've got\b/gi, "once we've got"],
+    [/\bonce you\b/gi, "once we"],
+    [/\bwhere you specify\b/gi, "where we specify"],
+    [/\bwhere you put\b/gi, "where we put"],
+    [/\byou put in\b/gi, "we put in"],
+    [/\byou assigned\b/gi, "we assigned"],
+    [/\bmeans we can access\b/gi, "means the service can be accessed"],
+    [/\bensure you've got\b/gi, "ensure we've got"],
+    [/\bin your terminal\b/gi, "in the terminal"],
+    [/\bwhich is your private key\b/gi, "which is the private key"],
+    [/\bwhen you launched\b/gi, "when we launched"],
+    [/\byou launched\b/gi, "we launched"],
+  ];
+
+  let cleanedAnswer = answer;
+  let patternsCaught = 0;
+
+  // Apply each replacement
+  for (const [pattern, replacement] of youFixes) {
+    const matches = cleanedAnswer.match(pattern);
+    if (matches && matches.length > 0) {
+      patternsCaught += matches.length;
+      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
+    }
+  }
+
+  // Log warning if any patterns were caught
+  if (patternsCaught > 0) {
+    console.warn(`⚠️ Caught and fixed ${patternsCaught} 'you' POV mistake(s) in AI response`);
+  }
+
   return cleanedAnswer;
 }
 
@@ -168,9 +261,12 @@ export class AskController {
       // Apply banned words cleanup before sending to frontend
       const cleanedAnswer = cleanupBannedWords(answer);
 
+      // Apply 'you' POV cleanup as safety net
+      const finalAnswer = cleanupYouPOVMistakes(cleanedAnswer);
+
       // Update server conversation history
       conversationHistory.push({ role: 'user', content: question });
-      conversationHistory.push({ role: 'assistant', content: cleanedAnswer });
+      conversationHistory.push({ role: 'assistant', content: finalAnswer });
 
       // Keep only last 12 messages (6 question-answer pairs) to manage memory
       if (conversationHistory.length > 12) {
@@ -178,7 +274,7 @@ export class AskController {
       }
 
       // Extract and update recent projects used
-      const foundProjects = extractProjectNames(cleanedAnswer, KNOWN_PROJECTS);
+      const foundProjects = extractProjectNames(finalAnswer, currentProfile.resumeText);
       foundProjects.forEach(project => {
         if (currentProfile && !currentProfile.recentProjectsUsed.includes(project)) {
           currentProfile.recentProjectsUsed.push(project);
@@ -189,7 +285,7 @@ export class AskController {
 
       res.status(200).json({
         status: 'success',
-        answer: cleanedAnswer,
+        answer: finalAnswer,
         recentProjectsUsed: currentProfile.recentProjectsUsed,
         conversationHistory: conversationHistory
       });

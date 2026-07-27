@@ -52,6 +52,8 @@ JOB DESCRIPTION (match technical depth and keywords to this):
 ${profile.jobDescriptionText}
 ${historyText}
 
+IMPORTANT: Base all technical answers strictly on the technologies, tools, and projects mentioned in the RESUME and JOB DESCRIPTION provided. This could be Python, Java, React, Data Engineering tools like Spark/Airflow, DevOps tools like Terraform/Ansible, mobile frameworks, ML frameworks, or any other domain. Never assume a specific tech stack — always pull from what's actually in the resume text given.
+
 RULES FOR YOUR ANSWER:
 1. Repeat the question briefly first.
 2. Start naturally based on the question — sometimes use a transition like "Sure...", "Yeah...", "So basically...", but sometimes just start directly answering without any transition word at all, like a confident person would. Don't follow a fixed rotation list — react naturally to each specific question.
@@ -81,7 +83,43 @@ Sentences should be shorter and more direct — the way someone actually talks, 
 
 Before finalizing the answer, mentally check every sentence — if it sounds like something written in a textbook, company blog, or documentation, rewrite it in simpler, more casual spoken words. If any banned word appears, replace it with a simpler alternative.
 
-9. CRITICAL — AVOID AI-SOUNDING PATTERNS THAT GIVE AWAY THE ANSWER ISN'T REAL:
+EXPERIENCE-BASED ANSWER CALIBRATION — the candidate's number of years (${profile.experienceYears}) must clearly shape HOW they answer, not just what they know:
+
+- 0-2 years: Simpler explanations, focused on 'what I learned/used', less confident tone, follows what seniors decided, occasionally admits limited exposure to bigger architecture decisions.
+
+- 3-5 years: Confident, practical, explains WHY a choice was made not just WHAT it is, talks about challenges personally solved, comfortable with follow-ups. This is the default professional tone.
+
+- 6-9 years: Adds system-level thinking, trade-offs between approaches, mentions reviewing others' code, slightly more measured tone, sometimes gently challenges an oversimplified question.
+
+- 10+ years: Speaks with clear authority, references architecture/team-level decisions, mentions mentoring or setting standards, doesn't over-explain basics, moves faster to nuance, occasionally pushes back lightly on the question itself.
+
+Apply this tone consistently across the ENTIRE answer, not just mentioned once.
+
+CRITICAL — AVOID PATTERNS THAT REVEAL THIS IS AI-GENERATED:
+
+1. NEVER use future/proposal tense for past project work. A real person describing work they already did speaks in PAST tense only.
+   WRONG: 'I will develop the API', 'we will make sure data is validated', 'we will implement caching'
+   RIGHT: 'I built the API', 'we made sure data was validated', 'we added caching'
+   Scan every sentence — all verbs describing project work must be past tense (built, added, used, fixed, faced, solved, decided), never future/intention tense.
+
+2. Avoid clean report-style conclusions after every point — real people trail off naturally or move to the next thought instead of a polished wrap-up every single time.
+
+3. Avoid formally restating the question like customer service ('That's a great question, let me address that'). React more casually and specifically to what was actually asked.
+
+4. Avoid vague safe corporate phrases like 'ensuring smooth performance', 'optimal results', 'effective solution' — replace with specific concrete detail about what actually happened.
+
+5. Overall test: if the answer could pass as a company blog case study or client pitch, it's WRONG. It must sound like a real employee casually recalling something they personally lived through in conversation, imperfections included — because the interviewer must never suspect this wasn't genuinely remembered.
+
+10. CRITICAL POV RULE — Never use 'you' to explain how something works (e.g. 'you configure it', 'you can plug in', 'you would use'). This sounds like teaching/instructing the interviewer, which is wrong — the candidate should never explain FROM a teacher's point of view.
+
+WARNING: The 'you' mistake happens MOST OFTEN on comparison questions (difference between X, Y, Z) and how-to/step questions (how do you configure/connect/set up X). For these question types specifically, actively rewrite every instinct to say 'you' — replace with 'we' or 'I' or reframe as 'the service is...' / 'it works by...' instead of 'you configure it by...'. 
+Example fixes:
+- WRONG: 'makes your service accessible from outside'
+- RIGHT: 'makes the service accessible from outside' or 'makes our service accessible from outside'
+- WRONG: 'you'd have an SSH key pair, then you'd use the SSH command'
+- RIGHT: 'we'd have an SSH key pair, then we'd use the SSH command' or 'I'd generate an SSH key pair, then use the SSH command'
+- WRONG: 'that's basically how you connect'
+- RIGHT: 'that's basically how we connect to it' or 'that's the flow we followed'
 
 1. NEVER use future/proposal-style phrasing when describing past work — this is the single biggest giveaway of AI-generated text. A real person describing their own project speaks in natural past tense about what already happened, not like they're pitching a plan.
    - WRONG: 'I will develop the API', 'we will make sure the data is validated', 'we will implement caching', 'I will design the schema'
@@ -130,13 +168,63 @@ Now answer this interview question in the exact style above:
 
 /**
  * Extract project names from answer for tracking recent usage
+ * Now uses dynamic extraction from resume instead of hardcoded list
  */
-export function extractProjectNames(answer: string, knownProjects: string[]): string[] {
+export function extractProjectNames(answer: string, resumeText: string): string[] {
   const foundProjects: string[] = [];
-  knownProjects.forEach(project => {
+  
+  // Extract potential project names from resume
+  const resumeProjects = extractProjectNamesFromResume(resumeText);
+  
+  // Check which resume projects are mentioned in the answer
+  resumeProjects.forEach(project => {
     if (answer.toLowerCase().includes(project.toLowerCase())) {
       foundProjects.push(project);
     }
   });
+  
   return foundProjects;
+}
+
+/**
+ * Dynamically extract project names from resume text
+ * Looks for common resume patterns like project headers, capitalized lines, etc.
+ */
+function extractProjectNamesFromResume(resumeText: string): string[] {
+  const projects: string[] = [];
+  
+  // Pattern 1: Look for lines that look like project headers (all caps or title case)
+  const lines = resumeText.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Skip empty lines or very short ones
+    if (trimmed.length < 3) continue;
+    
+    // Check for all caps or title case patterns that might be project names
+    if (trimmed === trimmed.toUpperCase() && trimmed.length < 50) {
+      // All caps line - likely a project header
+      projects.push(trimmed);
+    } else if (/^[A-Z][a-zA-Z\s&]+$/.test(trimmed) && trimmed.length < 60) {
+      // Title case with letters and spaces - might be a project name
+      projects.push(trimmed);
+    }
+  }
+  
+  // Pattern 2: Look for common project keywords
+  const projectKeywords = ['project', 'system', 'platform', 'application', 'app', 'portal', 'dashboard', 'tool', 'framework', 'engine', 'pipeline', 'service'];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    for (const keyword of projectKeywords) {
+      if (trimmed.toLowerCase().includes(keyword) && trimmed.length < 80) {
+        // Extract the potential project name (first few words)
+        const words = trimmed.split(/\s+/).slice(0, 4).join(' ');
+        if (words.length > 2 && !projects.includes(words)) {
+          projects.push(words);
+        }
+      }
+    }
+  }
+  
+  // Remove duplicates and return
+  return [...new Set(projects)].slice(0, 10); // Limit to 10 most likely projects
 }
