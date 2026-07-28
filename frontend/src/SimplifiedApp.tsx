@@ -271,7 +271,7 @@ function SimplifiedApp() {
 
   const startRecording = () => {
     try {
-      setTranscriptionError('');
+      setTranscriptionError(''); 
       setInterimTranscript('');
       accumulatedTranscriptRef.current = '';
       isManuallyStoppedRef.current = false;
