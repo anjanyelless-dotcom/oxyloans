@@ -51,8 +51,14 @@ function SimplifiedApp() {
     const savedMessages = localStorage.getItem('chatHistory');
     const savedConversationHistory = localStorage.getItem('conversationHistory');
     if (savedProfile) {
-      setProfile(JSON.parse(savedProfile));
+      const parsedProfile = JSON.parse(savedProfile);
+      setProfile(parsedProfile);
       setShowSetup(false);
+      
+      // Re-send profile to backend to handle server restarts
+      apiClient.post('/interviews/profile', parsedProfile)
+        .then(() => console.log('Profile re-sent to backend'))
+        .catch(err => console.error('Failed to re-send profile to backend:', err));
     }
     if (savedMessages) {
       const parsedMessages = JSON.parse(savedMessages);

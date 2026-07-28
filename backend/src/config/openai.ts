@@ -1,12 +1,17 @@
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import path from 'path';
 
-dotenv.config();
+// Load .env from the backend root directory
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const apiKey = process.env.OPENAI_API_KEY;
 
 if (!apiKey) {
-  console.warn('WARNING: OPENAI_API_KEY is not defined in environment variables. AI operations will fail.');
+  console.error('ERROR: OPENAI_API_KEY is not defined in environment variables. AI operations will fail.');
+  console.error('Please ensure your .env file contains a valid OPENAI_API_KEY');
+} else {
+  console.log('OpenAI API key loaded successfully');
 }
 
 import http from 'http';
@@ -22,7 +27,7 @@ const keepAliveAgent = new https.Agent({
 
 // Initialize official OpenAI SDK client with connection pooling agent
 export const openai = new OpenAI({
-  apiKey: apiKey || 'dummy-api-key-placeholder',
+  apiKey: apiKey,
   httpAgent: keepAliveAgent
 });
 
