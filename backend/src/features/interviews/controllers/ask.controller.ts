@@ -32,11 +32,13 @@ let conversationHistory: Array<{role: 'user' | 'assistant', content: string}> = 
 /**
  * Cleanup function to replace banned words with simpler alternatives
  * Uses word stem matching to catch word families (e.g., robust/robustness/robustly)
+ * NOTE: Only includes safe 1-to-1 word swaps. Words requiring phrase-level rewriting
+ * (like "significantly") are handled by prompt instructions only, not regex.
  */
 function cleanupBannedWords(answer: string): string {
   const bannedWordStems: [RegExp, string][] = [
+    // Safe 1-to-1 replacements that don't break grammar
     [/\brobust\w*/gi, "solid"],
-    [/\bsignificant\w*/gi, "big"],
     [/\bcomprehensiv\w*/gi, "complete"],
     [/\bfacilit\w*/gi, "help"],
     [/\bcrucial\w*/gi, "important"],
@@ -54,6 +56,8 @@ function cleanupBannedWords(answer: string): string {
     [/\bintricate\w*/gi, "complex"],
     [/\bdelve\w*/gi, "look at"],
     [/\bdive into\w*/gi, "explore"],
+    // NOTE: "significantly" intentionally excluded - requires phrase-level rewriting,
+    // handled by prompt instructions only to avoid grammar-breaking swaps
   ];
 
   let cleanedAnswer = answer;
@@ -97,6 +101,10 @@ function cleanupEssayPhrases(answer: string): string {
     [/\bquite challenging\b/gi, "pretty challenging"],
     [/\bquite difficult\b/gi, "pretty difficult"],
     [/\bquite complex\b/gi, "pretty complex"],
+    // Fix illogical phrases from word replacements
+    [/\ba bit too complete for\b/gi, "too complex for"],
+    [/\btoo complete for\b/gi, "too complex for"],
+    [/\bquite complete for\b/gi, "quite complex for"],
   ];
 
   let cleanedAnswer = answer;
