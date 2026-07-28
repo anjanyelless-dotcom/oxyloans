@@ -31,34 +31,91 @@ let conversationHistory: Array<{role: 'user' | 'assistant', content: string}> = 
 
 /**
  * Cleanup function to replace banned words with simpler alternatives
- * Uses word boundaries (\b) and case-insensitive matching to avoid breaking words
+ * Uses word stem matching to catch word families (e.g., robust/robustness/robustly)
  */
 function cleanupBannedWords(answer: string): string {
-  const bannedWordMap: {[key: string]: string} = {
-    "crucial": "important",
-    "essentially": "basically", 
-    "significantly": "a lot",
-    "leverage": "use",
-    "utilize": "use",
-    "seamless": "easy",
-    "seamlessly": "easily",
-    "robust": "solid",
-    "streamline": "simplify",
-    "streamlined": "simplified",
-    "facilitate": "help",
-    "facilitated": "helped",
-    "comprehensive": "complete",
-    "delve into": "look at"
-  };
+  const bannedWordStems: [RegExp, string][] = [
+    [/\brobust\w*/gi, "solid"],
+    [/\bsignificant\w*/gi, "big"],
+    [/\bcomprehensiv\w*/gi, "complete"],
+    [/\bfacilit\w*/gi, "help"],
+    [/\bcrucial\w*/gi, "important"],
+    [/\bessential\w*/gi, "basically"],
+    [/\bleverage\w*/gi, "use"],
+    [/\butilize\w*/gi, "use"],
+    [/\bseamless\w*/gi, "easy"],
+    [/\bstreamline\w*/gi, "simplify"],
+    [/\borchestrat\w*/gi, "manage"],
+    [/\bencapsulat\w*/gi, "wrap"],
+    [/\bholistic\w*/gi, "complete"],
+    [/\bparadigm\w*/gi, "approach"],
+    [/\bsynergy\w*/gi, "combination"],
+    [/\boptimal\w*/gi, "best"],
+    [/\bintricate\w*/gi, "complex"],
+    [/\bdelve\w*/gi, "look at"],
+    [/\bdive into\w*/gi, "explore"],
+  ];
 
   let cleanedAnswer = answer;
+  let patternsCaught = 0;
   
-  // Apply each replacement with word boundary matching (case-insensitive)
-  for (const [bannedWord, replacement] of Object.entries(bannedWordMap)) {
-    const regex = new RegExp(`\\b${bannedWord}\\b`, 'gi');
-    cleanedAnswer = cleanedAnswer.replace(regex, replacement);
+  // Apply each stem-based replacement
+  for (const [pattern, replacement] of bannedWordStems) {
+    const matches = cleanedAnswer.match(pattern);
+    if (matches && matches.length > 0) {
+      patternsCaught += matches.length;
+      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
+    }
   }
   
+  // Log warning if any patterns were caught
+  if (patternsCaught > 0) {
+    console.warn(`⚠️ Caught and fixed ${patternsCaught} banned word family leak(s) in AI response`);
+  }
+  
+  return cleanedAnswer;
+}
+
+/**
+ * Cleanup function to simplify idiom-heavy/essay-style phrases
+ * Replaces polished written phrases with simpler spoken alternatives
+ */
+function cleanupEssayPhrases(answer: string): string {
+  const essayPhraseFixes: [RegExp, string][] = [
+    [/\ba real eye-opener\b/gi, "taught me a lesson"],
+    [/\bunderestimated the complexity involved\b/gi, "thought it would be simple but it wasn't"],
+    [/\ba significant improvement\b/gi, "made a big difference"],
+    [/\ba steep learning curve\b/gi, "took some time to learn"],
+    [/\bit was quite a journey\b/gi, "it was quite an experience"],
+    [/\bplanning for scalability and robustness\b/gi, "planning for scale and reliability"],
+    [/\bplanning for scalability\b/gi, "planning for scale"],
+    [/\bplanning for robustness\b/gi, "planning for reliability"],
+    [/\bunderestimated the complexity\b/gi, "thought it would be simpler"],
+    [/\bquite a journey\b/gi, "quite an experience"],
+    [/\breal eye-opener\b/gi, "taught me a lesson"],
+    [/\beye-opener\b/gi, "taught me something"],
+    [/\bquite challenging\b/gi, "pretty challenging"],
+    [/\bquite difficult\b/gi, "pretty difficult"],
+    [/\bquite complex\b/gi, "pretty complex"],
+  ];
+
+  let cleanedAnswer = answer;
+  let patternsCaught = 0;
+
+  // Apply each replacement
+  for (const [pattern, replacement] of essayPhraseFixes) {
+    const matches = cleanedAnswer.match(pattern);
+    if (matches && matches.length > 0) {
+      patternsCaught += matches.length;
+      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
+    }
+  }
+
+  // Log warning if any patterns were caught
+  if (patternsCaught > 0) {
+    console.warn(`⚠️ Caught and fixed ${patternsCaught} essay-style phrase(s) in AI response`);
+  }
+
   return cleanedAnswer;
 }
 
@@ -261,8 +318,11 @@ export class AskController {
       // Apply banned words cleanup before sending to frontend
       const cleanedAnswer = cleanupBannedWords(answer);
 
+      // Apply essay-style phrase cleanup
+      const essayCleanedAnswer = cleanupEssayPhrases(cleanedAnswer);
+
       // Apply 'you' POV cleanup as safety net
-      const finalAnswer = cleanupYouPOVMistakes(cleanedAnswer);
+      const finalAnswer = cleanupYouPOVMistakes(essayCleanedAnswer);
 
       // Update server conversation history
       conversationHistory.push({ role: 'user', content: question });
