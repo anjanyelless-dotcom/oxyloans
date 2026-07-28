@@ -47,53 +47,65 @@ function SimplifiedApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Function to manually resend profile to backend
-  const resendProfileToBackend = async () => {
-    if (!profile) return;
+  const resendProfileToBackend = async (profileToSend: any, retryCount = 0): Promise<boolean> => {
+    if (!profileToSend) return false;
     
     try {
-      await apiClient.post('/interviews/profile', profile);
+      await apiClient.post('/interviews/profile', profileToSend);
       setProfileResendSuccess(true);
-      console.log('✅ Profile manually re-sent to backend successfully');
+      console.log('✅ Profile re-sent to backend successfully');
       setTimeout(() => setProfileResendSuccess(false), 3000);
+      return true;
     } catch (err) {
-      console.error('❌ Failed to manually re-send profile to backend:', err);
+      console.error('❌ Failed to re-send profile to backend:', err);
+      if (retryCount < 2) {
+        console.log(`Retrying profile re-send (${retryCount + 1}/3)...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return resendProfileToBackend(profileToSend, retryCount + 1);
+      }
       setError('Failed to reconnect to backend. Please refresh the page.');
+      return false;
     }
   };
 
   // Load profile and messages from localStorage on mount
   useEffect(() => {
-    const savedProfile = localStorage.getItem('interviewProfile');
-    const savedMessages = localStorage.getItem('chatHistory');
-    const savedConversationHistory = localStorage.getItem('conversationHistory');
-    if (savedProfile) {
-      const parsedProfile = JSON.parse(savedProfile);
-      setProfile(parsedProfile);
-      setShowSetup(false);
+    const loadProfileAndResend = async () => {
+      const savedProfile = localStorage.getItem('interviewProfile');
+      const savedMessages = localStorage.getItem('chatHistory');
+      const savedConversationHistory = localStorage.getItem('conversationHistory');
       
-      // Re-send profile to backend to handle server restarts
-      apiClient.post('/interviews/profile', parsedProfile)
-        .then(() => console.log('✅ Profile re-sent to backend successfully'))
-        .catch(err => {
-          console.error('❌ Failed to re-send profile to backend:', err);
-          // If re-sending fails, clear the profile from state to force user to re-enter it
+      if (savedProfile) {
+        const parsedProfile = JSON.parse(savedProfile);
+        setProfile(parsedProfile);
+        setShowSetup(false);
+        
+        // Re-send profile to backend to handle server restarts with retry
+        const success = await resendProfileToBackend(parsedProfile);
+        if (!success) {
+          // If all retries fail, clear the profile from state to force user to re-enter it
           setProfile(null);
           setShowSetup(true);
           localStorage.removeItem('interviewProfile');
-        });
-    }
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      // Convert timestamp strings back to Date objects
-      const messagesWithDates = parsedMessages.map((msg: any) => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      setMessages(messagesWithDates);
-    }
-    if (savedConversationHistory) {
-      setConversationHistory(JSON.parse(savedConversationHistory));
-    }
+        }
+      }
+      
+      if (savedMessages) {
+        const parsedMessages = JSON.parse(savedMessages);
+        // Convert timestamp strings back to Date objects
+        const messagesWithDates = parsedMessages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }));
+        setMessages(messagesWithDates);
+      }
+      
+      if (savedConversationHistory) {
+        setConversationHistory(JSON.parse(savedConversationHistory));
+      }
+    };
+    
+    loadProfileAndResend();
   }, []);
 
   // Save profile to localStorage whenever it changes
@@ -650,7 +662,7 @@ function SimplifiedApp() {
               </div>
               <div className="border-t border-slate-600 pt-2">
                 <button
-                  onClick={resendProfileToBackend}
+                  onClick={() => resendProfileToBackend(profile)}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-xs"
                 >
                   🔄 Reconnect Profile to Backend

@@ -67,6 +67,17 @@ Occasionally add a short mid-answer thinking break — a small pause where the c
 
 Use ONLY 1 such thinking-break moment per answer, placed naturally in the middle of the answer (not at the start or end), and only when the question is technical enough for this to make sense. Don't force it into short or simple questions.
 
+Occasionally add a short natural thinking sound after a sentence/pause, before continuing to the next point — like a person briefly pausing to recall or organize their next thought out loud. Use ONE of these lightly, 1 time per answer maximum, placed naturally between sentences (not at the very start):
+
+- 'Hmm...' before continuing to a new point: 'That's how we handled the caching part. Hmm... coming to the deployment side...'
+- 'Aah...' when recalling something: 'Aah, right, we also had to deal with token expiry.'
+- 'Ohh...' when remembering an example: 'Ohh, actually there was this one time when...'
+- A simple pause marker like '...' followed by 'let me think' or 'give me a sec': 'The main issue was... let me think... yeah, it was the caching layer.'
+
+Use this SPARINGLY — only 1 per answer, and only where it naturally fits a genuine pause point (like transitioning between explaining a concept and giving a project example, or when recalling a specific detail/number). Don't force it into every answer — some answers can have none of these, especially shorter ones. This should feel like an unconscious verbal habit, not a scripted insert.
+
+IMPORTANT: Balance this with the existing thinking-break rule (umm/wait let me think) and the Indian-English natural phrases rule — don't stack multiple of these techniques in the same answer. Pick whichever fits best for that specific answer, not all of them together. Use at most ONE natural pause/thinking element per answer total (either a thinking-break OR an Indian-English particle OR a sound interjection — not multiple types stacked).
+
 3. Don't follow a fixed paragraph template every time. Real people don't organize their speech in perfectly equal blocks. Instead, let the answer's shape vary naturally based on the question — sometimes the technical explanation is short and the project story is longer, sometimes it's reversed, sometimes there's a small tangent or a self-correction before getting back on track. The length and number of paragraphs (2 to 4) should vary answer to answer, not always be exactly 3.
 4. Add small natural filler words — "umm", "haa", "actually", a small restart like "what we did was... actually initially we tried something else." Maximum 1-2 per answer, don't overdo it.
 
@@ -82,6 +93,8 @@ Use these NATURALLY and SPARINGLY — 1 to 2 per answer maximum, mixed with exis
 
 Balance is important — don't overdo Indian-English particles to the point it feels like a caricature or stereotype. Use them subtly, the way someone with 6+ years in a professional/corporate environment would naturally speak — polished but with occasional native language patterns showing through, not exaggerated.
 
+IMPORTANT: Overall balance — don't stack multiple pause/thinking techniques in the same answer. Use at most ONE natural pause/thinking element per answer total (either a thinking-break OR an Indian-English particle OR a sound interjection — not multiple types stacked). Pick whichever fits best for that specific answer, not all of them together.
+
 5. Connect the answer to ONE specific project from the resume. Rotate between projects — avoid repeating: ${profile.recentProjectsUsed.join(", ") || "none yet"}.
    Use phrases like: "In our project...", "One challenge we faced was...", "To solve that...", "That's the approach we followed."
 6. End naturally — not with a perfect closing line every single time. Sometimes just end mid-thought naturally, sometimes trail off with something like "so yeah, that's mainly it" or just stop after the last practical point without a summary line. Don't use a closing line in every answer — vary this like real speech.
@@ -94,6 +107,13 @@ Balance is important — don't overdo Indian-English particles to the point it f
 CRITICAL WORD BAN — NEVER use these words or similar formal/AI-sounding words OR their word families: leverage, utilize, seamless, seamlessly, robust, robustness, robustly, streamline, streamlined, orchestration, encapsulate, facilitate, facilitates, facilitating, facilitated, holistic, paradigm, synergy, optimal, comprehensive, comprehensively, intricate, delve, dive into, crucial (use 'important' instead), essentially (use 'basically' instead), significant, significantly, orchestration system, deployment and scaling (use 'deploying and scaling' instead).
 
 Instead use plain, simple words: 'use' not 'utilize', 'easy/simple' not 'seamless', 'strong/solid' not 'robust/robustness', 'help/handle' not 'facilitate/facilitates', 'important' not 'crucial', 'basically' not 'essentially', 'look at/talk about' not 'delve into', 'manage/control' not 'orchestrate', 'complete/full' not 'comprehensive/comprehensively'.
+
+GRAMMAR CHECK: When simplifying adverbs, keep correct grammar — 'easy' is an adjective, 'easily' is the adverb form. Use 'easily' when describing HOW an action happens (e.g. 'works easily', 'integrates easily'), not 'easy'. Watch word order with 'both' — it should come right before the two things being compared: 'good for both X and Y', not 'good both for X and Y'.
+
+Watch basic grammar carefully, especially:
+- 'a' vs 'an': use 'an' before vowel sounds (an easy, an important, an issue), 'a' before consonant sounds (a big, a tricky). Never write 'a easy', 'a important', etc.
+- Gerund forms after prepositions: 'in managing X' not 'in manage X', 'for handling Y' not 'for handle Y' — always use the '-ing' form after a preposition like 'in', 'for', 'while', 'before'.
+- Tag questions like 'no?' or 'right?' should come as a SEPARATE clarifying tag at the end of a full sentence, with a comma before it: 'it was complex, no?' NOT mid-sentence like 'it was complex no, because...' — if a tag question would land awkwardly mid-sentence, skip it and use it only at a natural sentence end instead.
 
 CRITICAL: For "significantly" and "significant" — NEVER use these words. When you would naturally want to say 'improved X significantly' or 'X dropped significantly', rewrite the FULL phrase naturally:
 - 'improved performance significantly' → 'made performance a lot better' or 'performance got a lot better'
@@ -222,28 +242,63 @@ export function extractProjectNames(answer: string, resumeText: string): string[
 /**
  * Dynamically extract project names from resume text
  * Looks for common resume patterns like project headers, capitalized lines, etc.
+ * Fixed to exclude generic single words and prioritize real project names
  */
 function extractProjectNamesFromResume(resumeText: string): string[] {
   const projects: string[] = [];
   
-  // Pattern 1: Look for lines that look like project headers (all caps or title case)
+  // Stopword exclusion list - these are common resume section headers or generic words, never actual project names
+  const stopwords = ["Frontend", "Backend", "Database", "Technologies", "Skills", "Summary", "Experience", "Education", "Projects", "Objective", "Contact", "About", "Profile", "Personal", "Details", "Information", "Technical", "Professional", "Academic", "Certifications", "Achievements", "Interests", "Languages", "References"];
+  
+  // Find PROJECTS or EXPERIENCE section to prioritize
   const lines = resumeText.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
+  let inProjectsSection = false;
+  let inExperienceSection = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim().toUpperCase();
+    if (line.includes('PROJECTS') || line.includes('PROJECT')) {
+      inProjectsSection = true;
+      inExperienceSection = false;
+    } else if (line.includes('EXPERIENCE') || line.includes('WORK HISTORY')) {
+      inExperienceSection = true;
+      inProjectsSection = false;
+    } else if (line.includes('EDUCATION') || line.includes('SKILLS') || line.includes('CERTIFICATIONS')) {
+      inProjectsSection = false;
+      inExperienceSection = false;
+    }
+    
+    const trimmed = lines[i].trim();
     // Skip empty lines or very short ones
     if (trimmed.length < 3) continue;
     
     // Check for all caps or title case patterns that might be project names
+    let isProjectName = false;
     if (trimmed === trimmed.toUpperCase() && trimmed.length < 50) {
       // All caps line - likely a project header
-      projects.push(trimmed);
+      isProjectName = true;
     } else if (/^[A-Z][a-zA-Z\s&]+$/.test(trimmed) && trimmed.length < 60) {
       // Title case with letters and spaces - might be a project name
-      projects.push(trimmed);
+      isProjectName = true;
+    }
+    
+    if (isProjectName) {
+      const words = trimmed.split(/\s+/);
+      
+      // Filter out single-word matches and stopwords
+      if (words.length >= 2 && !stopwords.includes(trimmed)) {
+        // Prioritize if in PROJECTS or EXPERIENCE section
+        if (inProjectsSection || inExperienceSection) {
+          // Add to front of array (higher priority)
+          projects.unshift(trimmed);
+        } else {
+          projects.push(trimmed);
+        }
+      }
     }
   }
   
-  // Pattern 2: Look for common project keywords
+  // Pattern 2: Look for common project keywords with better filtering
   const projectKeywords = ['project', 'system', 'platform', 'application', 'app', 'portal', 'dashboard', 'tool', 'framework', 'engine', 'pipeline', 'service'];
   for (const line of lines) {
     const trimmed = line.trim();
@@ -251,7 +306,10 @@ function extractProjectNamesFromResume(resumeText: string): string[] {
       if (trimmed.toLowerCase().includes(keyword) && trimmed.length < 80) {
         // Extract the potential project name (first few words)
         const words = trimmed.split(/\s+/).slice(0, 4).join(' ');
-        if (words.length > 2 && !projects.includes(words)) {
+        const wordCount = words.split(/\s+/).length;
+        
+        // Filter: must be 2+ words and not a stopword
+        if (wordCount >= 2 && !stopwords.includes(words) && !projects.includes(words)) {
           projects.push(words);
         }
       }
