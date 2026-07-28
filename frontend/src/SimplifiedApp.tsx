@@ -39,11 +39,27 @@ function SimplifiedApp() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
+  const [profileResendSuccess, setProfileResendSuccess] = useState(false);
   const recognitionRef = useRef<any>(null);
   const isManuallyStoppedRef = useRef(false);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accumulatedTranscriptRef = useRef('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Function to manually resend profile to backend
+  const resendProfileToBackend = async () => {
+    if (!profile) return;
+    
+    try {
+      await apiClient.post('/interviews/profile', profile);
+      setProfileResendSuccess(true);
+      console.log('✅ Profile manually re-sent to backend successfully');
+      setTimeout(() => setProfileResendSuccess(false), 3000);
+    } catch (err) {
+      console.error('❌ Failed to manually re-send profile to backend:', err);
+      setError('Failed to reconnect to backend. Please refresh the page.');
+    }
+  };
 
   // Load profile and messages from localStorage on mount
   useEffect(() => {
@@ -57,8 +73,14 @@ function SimplifiedApp() {
       
       // Re-send profile to backend to handle server restarts
       apiClient.post('/interviews/profile', parsedProfile)
-        .then(() => console.log('Profile re-sent to backend'))
-        .catch(err => console.error('Failed to re-send profile to backend:', err));
+        .then(() => console.log('✅ Profile re-sent to backend successfully'))
+        .catch(err => {
+          console.error('❌ Failed to re-send profile to backend:', err);
+          // If re-sending fails, clear the profile from state to force user to re-enter it
+          setProfile(null);
+          setShowSetup(true);
+          localStorage.removeItem('interviewProfile');
+        });
     }
     if (savedMessages) {
       const parsedMessages = JSON.parse(savedMessages);
@@ -618,13 +640,24 @@ function SimplifiedApp() {
           {/* Profile Dropdown */}
           {showProfileDropdown && profile && (
             <div className="mt-4 p-3 bg-slate-700 rounded-lg text-sm">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 mb-3">
                 <div><span className="text-slate-400">Name:</span> {profile.candidateName}</div>
                 <div><span className="text-slate-400">Experience:</span> {profile.experienceYears} years</div>
                 <div><span className="text-slate-400">Current:</span> {profile.currentCompany} ({profile.currentRole})</div>
                 <div><span className="text-slate-400">Previous:</span> {profile.previousCompany} ({profile.previousRole})</div>
                 <div><span className="text-slate-400">Target:</span> {profile.targetCompany} ({profile.jobTitle})</div>
                 <div><span className="text-slate-400">Round:</span> {profile.interviewRound}</div>
+              </div>
+              <div className="border-t border-slate-600 pt-2">
+                <button
+                  onClick={resendProfileToBackend}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-xs"
+                >
+                  🔄 Reconnect Profile to Backend
+                </button>
+                {profileResendSuccess && (
+                  <p className="text-green-400 text-xs mt-1 text-center">✅ Profile reconnected successfully!</p>
+                )}
               </div>
             </div>
           )}

@@ -105,6 +105,19 @@ function cleanupEssayPhrases(answer: string): string {
     [/\ba bit too complete for\b/gi, "too complex for"],
     [/\btoo complete for\b/gi, "too complex for"],
     [/\bquite complete for\b/gi, "quite complex for"],
+    // Catch "significantly" leaks and fix with phrase-level replacements
+    [/\bimproved \w+ significantly\b/gi, "made a lot better"],
+    [/\b\w+ improved significantly\b/gi, "got a lot better"],
+    [/\b\w+ dropped significantly\b/gi, "dropped a lot"],
+    [/\b\w+ increased significantly\b/gi, "increased a lot"],
+    [/\b\w+ reduced significantly\b/gi, "reduced a lot"],
+    [/\breduced \w+ significantly\b/gi, "cut down a lot"],
+    [/\bperformance significantly\b/gi, "performance a lot"],
+    [/\bsignificantly improved\b/gi, "improved a lot"],
+    [/\bsignificantly reduced\b/gi, "reduced a lot"],
+    [/\bsignificantly increased\b/gi, "increased a lot"],
+    [/\bsignificantly better\b/gi, "a lot better"],
+    [/\bsignificantly worse\b/gi, "a lot worse"],
   ];
 
   let cleanedAnswer = answer;
