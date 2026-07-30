@@ -1,12 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { openai } from '../../../config/openai';
-import { buildAnswerPrompt, extractProjectNames } from '../../../services/simple-prompt.service';
+import { 
+  buildAnswerPrompt, 
+  extractProjectNames
+} from '../../../services/simple-prompt.service';
 import { APIError } from '../../../middleware/error.middleware';
-
-interface AskRequest {
-  question: string;
-  conversationHistory?: Array<{role: 'user' | 'assistant', content: string}>;
-}
 
 interface Profile {
   candidateName: string;
@@ -23,11 +21,31 @@ interface Profile {
   recentProjectsUsed: string[];
 }
 
-// In-memory profile storage (in production, this would come from database/session)
 let currentProfile: Profile | null = null;
 
 // In-memory conversation history for context
 let conversationHistory: Array<{role: 'user' | 'assistant', content: string}> = [];
+
+// Track recent opening words used to prevent repetition
+let recentOpenersUsed: string[] = [];
+
+/**
+ * Extract opening word from an answer to track variety
+ */
+function extractOpeningWord(answer: string): string {
+  const openingWords = ['Yeah', 'So', 'Right', 'Okay', 'Sure', 'Actually', 'Basically', 'Well', 'Hmm', 'Let me'];
+  const words = answer.trim().split(/\s+/);
+  const firstWord = words[0]?.replace(/[.,!?]/g, ''); // Remove punctuation
+  
+  // Check if the first word matches any known opener
+  for (const opener of openingWords) {
+    if (firstWord.toLowerCase() === opener.toLowerCase()) {
+      return opener;
+    }
+  }
+  
+  return firstWord || '';
+}
 
 /**
  * Cleanup function to replace banned words with simpler alternatives
@@ -44,184 +62,63 @@ function cleanupBannedWords(answer: string): string {
     [/\bcrucial\w*/gi, "important"],
     [/\bessential\w*/gi, "basically"],
     [/\bleverage\w*/gi, "use"],
-    [/\butilize\w*/gi, "use"],
-    [/\bseamless\w*/gi, "easy"],
-    [/\bstreamline\w*/gi, "simplify"],
+    [/\butili[z][e]*\w*/gi, "use"],
+    [/\bseamless\w*/gi, "smooth"],
+    [/\bstreamlin\w*/gi, "simplify"],
     [/\borchestrat\w*/gi, "manage"],
     [/\bencapsulat\w*/gi, "wrap"],
     [/\bholistic\w*/gi, "complete"],
     [/\bparadigm\w*/gi, "approach"],
-    [/\bsynergy\w*/gi, "combination"],
+    [/\bsynergy\w*/gi, "collaboration"],
     [/\boptimal\w*/gi, "best"],
     [/\bintricate\w*/gi, "complex"],
     [/\bdelve\w*/gi, "look at"],
-    [/\bdive into\w*/gi, "explore"],
-    // NOTE: "significantly" intentionally excluded - requires phrase-level rewriting,
-    // handled by prompt instructions only to avoid grammar-breaking swaps
+    [/\bdive\w*into\w*/gi, "explore"],
   ];
 
   let cleanedAnswer = answer;
-  let patternsCaught = 0;
-  
-  // Apply each stem-based replacement
   for (const [pattern, replacement] of bannedWordStems) {
-    const matches = cleanedAnswer.match(pattern);
-    if (matches && matches.length > 0) {
-      patternsCaught += matches.length;
-      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
-    }
+    cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
   }
-  
-  // Log warning if any patterns were caught
-  if (patternsCaught > 0) {
-    console.warn(`⚠️ Caught and fixed ${patternsCaught} banned word family leak(s) in AI response`);
-  }
-  
+
   return cleanedAnswer;
 }
 
 /**
- * Cleanup function to simplify idiom-heavy/essay-style phrases
- * Replaces polished written phrases with simpler spoken alternatives
+ * Cleanup essay-style phrases that sound too formal/AI-written
  */
 function cleanupEssayPhrases(answer: string): string {
-  const essayPhraseFixes: [RegExp, string][] = [
-    [/\ba real eye-opener\b/gi, "taught me a lesson"],
-    [/\bunderestimated the complexity involved\b/gi, "thought it would be simple but it wasn't"],
-    [/\ba significant improvement\b/gi, "made a big difference"],
-    [/\ba steep learning curve\b/gi, "took some time to learn"],
-    [/\bit was quite a journey\b/gi, "it was quite an experience"],
+  const essayPhrases: [RegExp, string][] = [
+    [/\ba real eye-opener\b/gi, "really informative"],
+    [/\bunderestimated the complexity\b/gi, "didn't realize how complex it was"],
+    [/\ba significant improvement\b/gi, "a big improvement"],
     [/\bplanning for scalability and robustness\b/gi, "planning for scale and reliability"],
-    [/\bplanning for scalability\b/gi, "planning for scale"],
-    [/\bplanning for robustness\b/gi, "planning for reliability"],
-    [/\bunderestimated the complexity\b/gi, "thought it would be simpler"],
-    [/\bquite a journey\b/gi, "quite an experience"],
-    [/\breal eye-opener\b/gi, "taught me a lesson"],
-    [/\beye-opener\b/gi, "taught me something"],
-    [/\bquite challenging\b/gi, "pretty challenging"],
-    [/\bquite difficult\b/gi, "pretty difficult"],
-    [/\bquite complex\b/gi, "pretty complex"],
-    // Fix illogical phrases from word replacements
-    [/\ba bit too complete for\b/gi, "too complex for"],
-    [/\btoo complete for\b/gi, "too complex for"],
-    [/\bquite complete for\b/gi, "quite complex for"],
   ];
 
   let cleanedAnswer = answer;
-  let patternsCaught = 0;
-
-  // Apply each replacement
-  for (const [pattern, replacement] of essayPhraseFixes) {
-    const matches = cleanedAnswer.match(pattern);
-    if (matches && matches.length > 0) {
-      patternsCaught += matches.length;
-      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
-    }
-  }
-
-  // Log warning if any patterns were caught
-  if (patternsCaught > 0) {
-    console.warn(`⚠️ Caught and fixed ${patternsCaught} essay-style phrase(s) in AI response`);
+  for (const [pattern, replacement] of essayPhrases) {
+    cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
   }
 
   return cleanedAnswer;
 }
 
 /**
- * Cleanup function to fix 'you' POV mistakes that slip through
- * Uses regex patterns to catch common 'you' leak patterns and auto-correct them
- * These are generic grammar patterns, not tied to specific tech domains
+ * Cleanup 'you' POV mistakes as safety net
  */
 function cleanupYouPOVMistakes(answer: string): string {
-  const youFixes: [RegExp, string][] = [
-    // Generic possessive patterns (domain-agnostic)
-    [/\byour service\b/gi, "the service"],
-    [/\byour system\b/gi, "the system"],
-    [/\byour application\b/gi, "the application"],
-    [/\byour app\b/gi, "the app"],
-    [/\byour project\b/gi, "the project"],
-    [/\byour code\b/gi, "the code"],
-    [/\byour data\b/gi, "the data"],
-    [/\byour database\b/gi, "the database"],
-    [/\byour server\b/gi, "the server"],
-    [/\byour machine\b/gi, "the machine"],
-    [/\byour environment\b/gi, "the environment"],
-    [/\byour setup\b/gi, "the setup"],
-    [/\byour configuration\b/gi, "the configuration"],
-    [/\byour infrastructure\b/gi, "the infrastructure"],
-    [/\byour pipeline\b/gi, "the pipeline"],
-    [/\byour workflow\b/gi, "the workflow"],
-    [/\byour team\b/gi, "the team"],
-    [/\byour organization\b/gi, "the organization"],
-    [/\byour company\b/gi, "the company"],
-    
-    // Generic verb patterns (domain-agnostic)
-    [/\byou'd\b/gi, "we'd"],
-    [/\byou can set up\b/gi, "we can set up"],
-    [/\byou can specify\b/gi, "we can specify"],
-    [/\byou can access\b/gi, "we can access"],
-    [/\bwe can access\b/gi, "the service can be accessed"],
+  const youPatterns: [RegExp, string][] = [
+    [/\byou configure\b/gi, "we configure"],
     [/\byou can\b/gi, "we can"],
-    [/\bhow you connect\b/gi, "how we connect"],
-    [/\bthat's how you\b/gi, "that's how we"],
-    [/\byou would use\b/gi, "we would use"],
+    [/\byou would\b/gi, "we would"],
     [/\byou need to\b/gi, "we need to"],
-    [/\byou need\b/gi, "we need"],
-    [/\byou're\b/gi, "we're"],
-    [/\byou have\b/gi, "we have"],
-    [/\byou get\b/gi, "we get"],
-    [/\byou use\b/gi, "we use"],
-    [/\byou gotta\b/gi, "we gotta"],
-    [/\byou generate\b/gi, "we generate"],
-    [/\byou generated\b/gi, "we generated"],
-    [/\bfirst you need\b/gi, "first we need"],
-    [/\bfirst you\b/gi, "first we"],
-    [/\bwhen you want\b/gi, "when we want"],
-    [/\bwhen you need\b/gi, "when we need"],
-    [/\bwhat you're trying\b/gi, "what we're trying"],
-    [/\bwalk you through\b/gi, "walk through"],
-    [/\bhelp you understand\b/gi, "help understand"],
-    [/\bshow you\b/gi, "show"],
-    [/\btell you\b/gi, "tell"],
-    // Catch patterns where 'you' is used as subject in explanations
-    [/\byou want to\b/gi, "we want to"],
-    [/\byou want\b/gi, "we want"],
-    [/\byou don't\b/gi, "we don't"],
-    [/\byou do\b/gi, "we do"],
-    [/\byou should\b/gi, "we should"],
-    [/\byou must\b/gi, "we must"],
-    [/\byou will\b/gi, "we will"],
-    [/\byou'll\b/gi, "we'll"],
-    // Catch additional patterns
-    [/\bonce you've got\b/gi, "once we've got"],
-    [/\bonce you\b/gi, "once we"],
-    [/\bwhere you specify\b/gi, "where we specify"],
-    [/\bwhere you put\b/gi, "where we put"],
-    [/\byou put in\b/gi, "we put in"],
-    [/\byou assigned\b/gi, "we assigned"],
-    [/\bmeans we can access\b/gi, "means the service can be accessed"],
-    [/\bensure you've got\b/gi, "ensure we've got"],
-    [/\bin your terminal\b/gi, "in the terminal"],
-    [/\bwhich is your private key\b/gi, "which is the private key"],
-    [/\bwhen you launched\b/gi, "when we launched"],
-    [/\byou launched\b/gi, "we launched"],
+    [/\byour service\b/gi, "our service"],
+    [/\byour system\b/gi, "our system"],
   ];
 
   let cleanedAnswer = answer;
-  let patternsCaught = 0;
-
-  // Apply each replacement
-  for (const [pattern, replacement] of youFixes) {
-    const matches = cleanedAnswer.match(pattern);
-    if (matches && matches.length > 0) {
-      patternsCaught += matches.length;
-      cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
-    }
-  }
-
-  // Log warning if any patterns were caught
-  if (patternsCaught > 0) {
-    console.warn(`⚠️ Caught and fixed ${patternsCaught} 'you' POV mistake(s) in AI response`);
+  for (const [pattern, replacement] of youPatterns) {
+    cleanedAnswer = cleanedAnswer.replace(pattern, replacement);
   }
 
   return cleanedAnswer;
@@ -313,10 +210,12 @@ export class AskController {
         recentProjectsUsed: []
       };
 
+      conversationHistory = [];
+      recentOpenersUsed = [];
+
       res.status(200).json({
         status: 'success',
-        message: 'Profile set successfully',
-        profile: currentProfile
+        data: currentProfile
       });
     } catch (error) {
       next(error);
@@ -329,12 +228,12 @@ export class AskController {
   static async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!currentProfile) {
-        throw new APIError(404, 'NO_PROFILE', 'No profile has been set. Call POST /api/interviews/profile first.');
+        throw new APIError(404, 'NO_PROFILE', 'No profile has been set');
       }
 
       res.status(200).json({
         status: 'success',
-        profile: currentProfile
+        data: currentProfile
       });
     } catch (error) {
       next(error);
@@ -342,25 +241,25 @@ export class AskController {
   }
 
   /**
-   * Ask a question and get AI-generated answer
+   * Ask a question and get AI-generated answer (non-streaming)
    */
   static async ask(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { question, conversationHistory: clientHistory } = req.body as AskRequest;
-
-      if (!question || question.trim() === '') {
-        throw new APIError(400, 'INVALID_QUESTION', 'Question is required');
-      }
+      const { question, conversationHistory: clientHistory } = req.body as { question: string; conversationHistory?: Array<{role: 'user' | 'assistant', content: string}> };
 
       if (!currentProfile) {
         throw new APIError(400, 'NO_PROFILE', 'No profile has been set. Call POST /api/interviews/profile first.');
       }
 
-      // Use client conversation history if provided, otherwise use server history
+      if (!question || question.trim() === '') {
+        throw new APIError(400, 'INVALID_QUESTION', 'Question cannot be empty');
+      }
+
+      // Use provided history or server history
       const historyToUse = clientHistory || conversationHistory;
 
-      // Build the prompt with conversation history
-      const prompt = buildAnswerPrompt(currentProfile, historyToUse).replace("{{USER_QUESTION}}", question);
+      // Build the prompt with conversation history and recent openers
+      const prompt = buildAnswerPrompt(currentProfile, historyToUse, recentOpenersUsed).replace("{{USER_QUESTION}}", question);
 
       // Build messages array for OpenAI with conversation context
       const messages: Array<{role: 'system' | 'user', content: string}> = [
@@ -372,7 +271,7 @@ export class AskController {
       const response = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || "gpt-4o",
         temperature: 0.65, // Reduced from 0.85 for more consistent answers
-        max_tokens: 200, // Reduced from 400 for faster responses
+        max_tokens: 600, // Increased from 200 to 600 to prevent mid-sentence cutoffs with natural phrases
         messages
       });
       console.timeEnd('OpenAI API call');
@@ -392,30 +291,46 @@ export class AskController {
       // Apply 'you' POV cleanup as safety net
       const finalAnswer = cleanupYouPOVMistakes(essayCleanedAnswer);
 
+      // Extract and track opening word for variety
+      const openingWord = extractOpeningWord(finalAnswer);
+      if (openingWord) {
+        recentOpenersUsed.push(openingWord);
+        // Keep only last 3 opening words
+        if (recentOpenersUsed.length > 3) {
+          recentOpenersUsed = recentOpenersUsed.slice(-3);
+        }
+      }
+
       // Update server conversation history
       conversationHistory.push({ role: 'user', content: question });
       conversationHistory.push({ role: 'assistant', content: finalAnswer });
 
-      // Keep only last 12 messages (6 question-answer pairs) to manage memory
-      if (conversationHistory.length > 12) {
-        conversationHistory = conversationHistory.slice(-12);
+      // Keep only last 8 messages (4 question-answer pairs) to manage memory
+      if (conversationHistory.length > 8) {
+        conversationHistory = conversationHistory.slice(-8);
       }
 
-      // Extract and update recent projects used (with question context for relevance)
+      // Extract and update recent projects used
       const foundProjects = extractProjectNames(finalAnswer, currentProfile.resumeText);
       foundProjects.forEach(project => {
         if (currentProfile && !currentProfile.recentProjectsUsed.includes(project)) {
           currentProfile.recentProjectsUsed.push(project);
           // Keep only last 2 projects
-          currentProfile.recentProjectsUsed = currentProfile.recentProjectsUsed.slice(-2);
+          if (currentProfile.recentProjectsUsed.length > 2) {
+            currentProfile.recentProjectsUsed = currentProfile.recentProjectsUsed.slice(-2);
+          }
         }
       });
 
+      // Run lightweight self-check for quality assurance
+      selfCheckAnswer(finalAnswer, question);
+
       res.status(200).json({
         status: 'success',
-        answer: finalAnswer,
-        recentProjectsUsed: currentProfile.recentProjectsUsed,
-        conversationHistory: conversationHistory
+        data: {
+          answer: finalAnswer,
+          conversationHistory: conversationHistory
+        }
       });
     } catch (error) {
       next(error);
@@ -423,49 +338,49 @@ export class AskController {
   }
 
   /**
-   * Ask a question and get AI-generated answer with streaming
+   * Ask a question and get AI-generated answer (streaming)
    */
   static async askStream(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { question, conversationHistory: clientHistory } = req.body as AskRequest;
-
-      if (!question || question.trim() === '') {
-        throw new APIError(400, 'INVALID_QUESTION', 'Question is required');
-      }
+      const { question, conversationHistory: clientHistory } = req.body as { question: string; conversationHistory?: Array<{role: 'user' | 'assistant', content: string}> };
 
       if (!currentProfile) {
         throw new APIError(400, 'NO_PROFILE', 'No profile has been set. Call POST /api/interviews/profile first.');
       }
 
-      // Set SSE headers
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (!question || question.trim() === '') {
+        throw new APIError(400, 'INVALID_QUESTION', 'Question cannot be empty');
+      }
 
-      // Use client conversation history if provided, otherwise use server history
+      // Use provided history or server history
       const historyToUse = clientHistory || conversationHistory;
 
       // Trim to last 4 messages (2 exchanges) for performance
       const trimmedHistory = historyToUse.slice(-4);
 
-      // Build the prompt with trimmed conversation history
-      const prompt = buildAnswerPrompt(currentProfile, trimmedHistory).replace("{{USER_QUESTION}}", question);
+      // Build the prompt with trimmed conversation history and recent openers
+      const prompt = buildAnswerPrompt(currentProfile, trimmedHistory, recentOpenersUsed).replace("{{USER_QUESTION}}", question);
 
       // Build messages array for OpenAI with conversation context
       const messages: Array<{role: 'system' | 'user', content: string}> = [
         { role: "user", content: prompt }
       ];
 
+      // Set SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
       // Call OpenAI API with streaming
       console.time('OpenAI Streaming API call');
       const stream = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || "gpt-4o",
         temperature: 0.65, // Reduced from 0.85 for more consistent answers
-        max_tokens: 200, // Reduced from 400 for faster responses
+        max_tokens: 600, // Increased from 200 to 600 to prevent mid-sentence cutoffs with natural phrases
         messages,
         stream: true
       });
+      console.timeEnd('OpenAI Streaming API call');
 
       let fullAnswer = '';
 
@@ -478,12 +393,20 @@ export class AskController {
         }
       }
 
-      console.timeEnd('OpenAI Streaming API call');
-
       // Apply content filtering to final answer only
       const cleanedAnswer = cleanupBannedWords(fullAnswer);
       const essayCleanedAnswer = cleanupEssayPhrases(cleanedAnswer);
       const finalAnswer = cleanupYouPOVMistakes(essayCleanedAnswer);
+
+      // Extract and track opening word for variety
+      const openingWord = extractOpeningWord(finalAnswer);
+      if (openingWord) {
+        recentOpenersUsed.push(openingWord);
+        // Keep only last 3 opening words
+        if (recentOpenersUsed.length > 3) {
+          recentOpenersUsed = recentOpenersUsed.slice(-3);
+        }
+      }
 
       // Run lightweight self-check for quality assurance
       selfCheckAnswer(finalAnswer, question);
@@ -503,21 +426,21 @@ export class AskController {
         if (currentProfile && !currentProfile.recentProjectsUsed.includes(project)) {
           currentProfile.recentProjectsUsed.push(project);
           // Keep only last 2 projects
-          currentProfile.recentProjectsUsed = currentProfile.recentProjectsUsed.slice(-2);
+          if (currentProfile.recentProjectsUsed.length > 2) {
+            currentProfile.recentProjectsUsed = currentProfile.recentProjectsUsed.slice(-2);
+          }
         }
       });
 
-      // Send final message with complete answer and metadata
+      // Send final message
       res.write(`data: ${JSON.stringify({ 
         type: 'done', 
         answer: finalAnswer,
-        conversationHistory: conversationHistory,
-        recentProjectsUsed: currentProfile?.recentProjectsUsed || []
+        conversationHistory: conversationHistory
       })}\n\n`);
-
       res.end();
     } catch (error) {
-      // Send error through SSE
+      console.error('Streaming error:', error);
       res.write(`data: ${JSON.stringify({ 
         type: 'error', 
         error: error instanceof Error ? error.message : 'Unknown error occurred' 
@@ -534,6 +457,7 @@ export class AskController {
     try {
       currentProfile = null;
       conversationHistory = [];
+      recentOpenersUsed = [];
       res.status(200).json({
         status: 'success',
         message: 'Profile reset successfully'

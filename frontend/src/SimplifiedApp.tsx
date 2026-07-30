@@ -18,9 +18,9 @@ export default function SimplifiedApp() {
   // Refs for voice recording
   const isRecordingRef = useRef(false);
   const recognitionRef = useRef<any>(null);
-  const accumulatedTranscriptRef = useRef('');
-  const silenceTimerRef = useRef<number | null>(null);
-  const isManuallyStoppedRef = useRef(false);
+  const fullTranscriptRef = useRef('');
+  const shouldBeListeningRef = useRef(false);
+  const restartAttemptsRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load profile and messages from localStorage on mount
@@ -153,12 +153,8 @@ export default function SimplifiedApp() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      isManuallyStoppedRef.current = true;
-      accumulatedTranscriptRef.current = '';
-      
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-      }
+      shouldBeListeningRef.current = false;
+      fullTranscriptRef.current = '';
       
       if (recognitionRef.current) {
         recognitionRef.current.stop();
@@ -272,7 +268,7 @@ export default function SimplifiedApp() {
       ));
 
       setCurrentQuestion('');
-      accumulatedTranscriptRef.current = '';
+      fullTranscriptRef.current = '';
       setInterimTranscript('');
     } catch (err: any) {
       setError(err.message || 'Failed to get answer');
@@ -364,6 +360,7 @@ export default function SimplifiedApp() {
       ));
 
       setCurrentQuestion('');
+      fullTranscriptRef.current = '';
     } catch (err: any) {
       setError(err.message || 'Failed to regenerate answer');
     } finally {
@@ -388,96 +385,133 @@ export default function SimplifiedApp() {
     }
   };
 
-  const startRecording = () => {
+  const createRecognition = (onTranscriptUpdate: (full: string, interim: string) => void) => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setTranscriptionError('Speech recognition is not supported in this browser.');
-      return;
+      return null;
     }
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = true;
-    recognitionRef.current.interimResults = true;
-    recognitionRef.current.lang = 'en-US';
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
-    recognitionRef.current.onresult = (event: any) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-
+    recognition.onresult = (event: any) => {
+      restartAttemptsRef.current = 0;
+      let interim = '';
+      
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
+        const text = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' ';
+          fullTranscriptRef.current += text + ' ';
         } else {
-          interimTranscript += transcript;
+          interim += text;
         }
-      }
-
-      if (finalTranscript) {
-        accumulatedTranscriptRef.current += finalTranscript;
-        setCurrentQuestion(accumulatedTranscriptRef.current);
-      }
-
-      if (interimTranscript) {
-        setInterimTranscript(interimTranscript);
-      } else {
-        setInterimTranscript('');
-      }
-
-      // Reset silence timer when we get results
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
       }
       
-      // Start new silence timer
-      silenceTimerRef.current = window.setTimeout(() => {
-        if (isRecordingRef.current && !isManuallyStoppedRef.current) {
-          stopRecording();
-        }
-      }, 2000);
+      onTranscriptUpdate(fullTranscriptRef.current, interim);
     };
 
-    recognitionRef.current.onerror = (event: any) => {
+    recognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error);
-      setTranscriptionError('Speech recognition error: ' + event.error);
-      stopRecording();
-    };
-
-    recognitionRef.current.onend = () => {
-      if (isRecordingRef.current) {
-        isRecordingRef.current = false;
+      if (['network', 'no-speech', 'aborted'].includes(event.error)) {
+        console.log('Recoverable error, not stopping');
+        return;
+      }
+      if (event.error === 'not-allowed') {
+        shouldBeListeningRef.current = false;
+        setTranscriptionError('Microphone permission denied. Please allow microphone access.');
+      } else {
+        setTranscriptionError('Speech recognition error: ' + event.error);
+        shouldBeListeningRef.current = false;
       }
     };
 
-    try {
-      recognitionRef.current.start();
-      isRecordingRef.current = true;
-      setTranscriptionError('');
-    } catch (error) {
-      console.error('Failed to start speech recognition:', error);
-      setTranscriptionError('Failed to start speech recognition');
+    recognition.onend = () => {
+      console.log('Speech recognition ended');
+      isRecordingRef.current = false;
+      
+      // Only auto-restart if we're supposed to be listening and it wasn't a manual stop
+      if (shouldBeListeningRef.current && restartAttemptsRef.current < 3) {
+        restartAttemptsRef.current++;
+        const delay = Math.min(1000 * restartAttemptsRef.current, 3000);
+        console.log(`Auto-restarting in ${delay}ms (attempt ${restartAttemptsRef.current})`);
+        setTimeout(() => {
+          if (shouldBeListeningRef.current && !isRecordingRef.current) {
+            const newRecognition = createRecognition(onTranscriptUpdate);
+            if (newRecognition) {
+              recognitionRef.current = newRecognition;
+              try {
+                newRecognition.start();
+                isRecordingRef.current = true;
+              } catch (error) {
+                console.error('Failed to restart speech recognition:', error);
+                shouldBeListeningRef.current = false;
+              }
+            }
+          }
+        }, delay);
+      } else {
+        console.log('Not auto-restarting (manual stop or max attempts reached)');
+        shouldBeListeningRef.current = false;
+      }
+    };
+
+    return recognition;
+  };
+
+  const startListening = () => {
+    // Stop any existing recognition first
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    
+    shouldBeListeningRef.current = true;
+    restartAttemptsRef.current = 0;
+    fullTranscriptRef.current = '';
+    
+    const recognition = createRecognition((full: string, interim: string) => {
+      setCurrentQuestion(full + interim);
+      setInterimTranscript(interim);
+    });
+    
+    if (recognition) {
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+        isRecordingRef.current = true;
+        setTranscriptionError('');
+      } catch (error) {
+        console.error('Failed to start speech recognition:', error);
+        setTranscriptionError('Failed to start speech recognition');
+        isRecordingRef.current = false;
+      }
     }
   };
 
-  const stopRecording = () => {
+  const stopListening = () => {
+    shouldBeListeningRef.current = false;
+    
     if (recognitionRef.current) {
-      isManuallyStoppedRef.current = true;
       recognitionRef.current.stop();
       recognitionRef.current = null;
-      isRecordingRef.current = false;
-      
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-      }
     }
+    
+    isRecordingRef.current = false;
+    // Keep the transcript so the user can see what was recorded
   };
 
   const toggleRecording = () => {
     if (isRecordingRef.current) {
-      stopRecording();
+      stopListening();
     } else {
-      startRecording();
+      // Clear previous transcript when starting fresh
+      fullTranscriptRef.current = '';
+      setCurrentQuestion('');
+      setInterimTranscript('');
+      startListening();
     }
   };
 
@@ -811,6 +845,7 @@ export default function SimplifiedApp() {
               {transcriptionError}
             </div>
           )}
+          
           <div className="flex gap-2">
             <button
               type="button"
