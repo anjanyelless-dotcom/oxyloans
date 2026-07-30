@@ -9,12 +9,13 @@ export default function SimplifiedApp() {
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
-  const [currentQuestion, setCurrentQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [transcriptionError, setTranscriptionError] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [rawTranscript, setRawTranscript] = useState('');
+  const [finalQuestion, setFinalQuestion] = useState('');
+  const [isListening, setIsListening] = useState(false);
 
   // Refs for voice recording
   const isRecordingRef = useRef(false);
@@ -213,7 +214,7 @@ export default function SimplifiedApp() {
 
   const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentQuestion.trim()) return;
+    if (!finalQuestion.trim()) return;
 
     try {
       setIsLoading(true);
@@ -225,7 +226,7 @@ export default function SimplifiedApp() {
       // Add user message
       const userMessage: Message = {
         role: 'user',
-        content: currentQuestion,
+        content: finalQuestion,
         timestamp: new Date(),
         questionId
       };
@@ -242,7 +243,7 @@ export default function SimplifiedApp() {
 
       // Call streaming API with conversation history
       const response: any = await apiClient.askStream(
-        currentQuestion, 
+        finalQuestion, 
         conversationHistory,
         (token: string) => {
           // Update the AI message content as tokens arrive
@@ -257,7 +258,7 @@ export default function SimplifiedApp() {
       // Update conversation history
       const newHistory: ConversationMessage[] = [
         ...conversationHistory,
-        { role: 'user', content: currentQuestion },
+        { role: 'user', content: finalQuestion },
         { role: 'assistant', content: response.answer }
       ];
       setConversationHistory(newHistory);
@@ -270,7 +271,7 @@ export default function SimplifiedApp() {
           : msg
       ));
 
-      setCurrentQuestion('');
+      setFinalQuestion('');
       fullTranscriptRef.current = '';
       setInterimTranscript('');
       isManuallyEditingRef.current = false;
@@ -364,7 +365,7 @@ export default function SimplifiedApp() {
           : msg
       ));
 
-      setCurrentQuestion('');
+      setFinalQuestion('');
       fullTranscriptRef.current = '';
       isManuallyEditingRef.current = false;
     } catch (err: any) {
@@ -379,7 +380,7 @@ export default function SimplifiedApp() {
       await apiClient.resetProfile();
       setProfile(null);
       setMessages([]);
-      setCurrentQuestion('');
+      setFinalQuestion('');
       setShowSetup(true);
       setError('');
       setConversationHistory([]);
@@ -482,6 +483,7 @@ export default function SimplifiedApp() {
     restartAttemptsRef.current = 0;
     fullTranscriptRef.current = '';
     isManuallyEditingRef.current = false;
+    setIsListening(true);
     
     const recognition = createRecognition((full: string, interim: string) => {
       setRawTranscript(full + interim);
@@ -498,6 +500,7 @@ export default function SimplifiedApp() {
         console.error('Failed to start speech recognition:', error);
         setTranscriptionError('Failed to start speech recognition');
         isRecordingRef.current = false;
+        setIsListening(false);
       }
     }
   };
@@ -505,6 +508,7 @@ export default function SimplifiedApp() {
   const stopListening = () => {
     shouldBeListeningRef.current = false;
     isManuallyEditingRef.current = false;
+    setIsListening(false);
     
     if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -516,7 +520,7 @@ export default function SimplifiedApp() {
   };
 
   const moveToQuestion = () => {
-    setCurrentQuestion(rawTranscript.trim());
+    setFinalQuestion(rawTranscript.trim());
     setRawTranscript('');
     fullTranscriptRef.current = '';
     setInterimTranscript('');
@@ -530,8 +534,8 @@ export default function SimplifiedApp() {
     isManuallyEditingRef.current = false;
   };
 
-  const clearCurrentQuestion = () => {
-    setCurrentQuestion('');
+  const clearFinalQuestion = () => {
+    setFinalQuestion('');
   };
 
   const handleRawTranscriptFocus = () => {
@@ -892,38 +896,49 @@ export default function SimplifiedApp() {
           )}
           
           {/* Top Box - Raw Transcript (editable workspace) */}
-          <div className="mb-2">
+          <div className="mb-3">
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs text-slate-500 font-medium">Raw Transcript (editable workspace)</label>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <div className="flex-1 relative">
                 <textarea
                   value={rawTranscript}
                   onChange={handleRawTranscriptChange}
                   onFocus={handleRawTranscriptFocus}
                   placeholder="Click mic and start speaking... edit here to clean up your text"
-                  className="w-full px-3 py-2 pr-20 border border-slate-200 rounded-lg bg-slate-50 text-slate-700 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 pr-16 border border-slate-200 rounded-lg bg-slate-50 text-slate-700 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
                   <button
                     type="button"
                     onClick={toggleRecording}
                     disabled={isLoading}
-                    className={`text-sm px-2 py-1 rounded transition-colors ${
-                      isRecordingRef.current 
-                        ? 'bg-red-500 text-white hover:bg-red-600' 
+                    className={`text-sm p-1.5 rounded transition-colors ${
+                      isListening 
+                        ? 'bg-red-500 text-white hover:bg-red-600 animate-pulse' 
                         : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                     } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    title={isRecordingRef.current ? 'Stop recording' : 'Start voice input'}
+                    title={isListening ? 'Stop recording' : 'Start voice input'}
                   >
-                    {isRecordingRef.current ? '🎤' : '🎤'}
+                    {isListening ? '🎤' : '🎤'}
                   </button>
+
+                      <button
+              type="button"
+              onClick={moveToQuestion}
+              disabled={!rawTranscript.trim()}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              title="Move transcript to question box"
+            >
+              <span>↑</span>
+             
+            </button>
                   {rawTranscript && (
                     <button
                       type="button"
                       onClick={clearRawTranscript}
-                      className="text-sm text-slate-400 hover:text-slate-600 transition-colors px-1"
+                      className="text-slate-400 hover:text-slate-600 transition-colors px-1"
                       title="Clear transcript"
                     >
                       ✕
@@ -939,39 +954,26 @@ export default function SimplifiedApp() {
             )}
           </div>
 
-          {/* Move to Question Button */}
-          <div className="flex justify-center my-2">
-            <button
-              type="button"
-              onClick={moveToQuestion}
-              disabled={!rawTranscript.trim()}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-              title="Move transcript to question box"
-            >
-              <span>↑</span>
-              <span>Move to Question</span>
-            </button>
-          </div>
-
+      
           {/* Bottom Box - Your Question (final) */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs text-slate-500 font-medium">Your Question (final, gets sent)</label>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <div className="flex-1 relative">
                 <input
                   type="text"
-                  value={currentQuestion}
-                  onChange={(e) => setCurrentQuestion(e.target.value)}
+                  value={finalQuestion}
+                  onChange={(e) => setFinalQuestion(e.target.value)}
                   placeholder="Your final question will appear here..."
                   disabled={isLoading}
-                  className="w-full px-4 py-2 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2.5 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed h-10"
                 />
-                {currentQuestion && (
+                {finalQuestion && (
                   <button
                     type="button"
-                    onClick={clearCurrentQuestion}
+                    onClick={clearFinalQuestion}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                     title="Clear question"
                   >
@@ -981,8 +983,8 @@ export default function SimplifiedApp() {
               </div>
               <button
                 type="submit"
-                disabled={isLoading || !currentQuestion.trim()}
-                className="bg-blue-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors"
+                disabled={isLoading || !finalQuestion.trim()}
+                className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors h-10"
               >
                 {isLoading ? 'Sending...' : 'Send'}
               </button>
