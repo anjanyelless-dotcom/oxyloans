@@ -24,8 +24,8 @@ interface ConversationMessage {
 }
 
 export function buildAnswerPrompt(profile: CandidateProfile, conversationHistory: ConversationMessage[] = []): string {
-  // Get last 6 messages for context (3 question-answer pairs)
-  const recentHistory = conversationHistory.slice(-6);
+  // Get last 4 messages for context (2 question-answer pairs) - reduced from 6 for speed
+  const recentHistory = conversationHistory.slice(-4);
   
   // Format conversation history for the prompt
   const historyText = recentHistory.length > 0 
@@ -58,6 +58,8 @@ RULES FOR YOUR ANSWER:
 1. Repeat the question briefly first.
 2. Start naturally based on the question — sometimes use a transition like "Sure...", "Yeah...", "So basically...", but sometimes just start directly answering without any transition word at all, like a confident person would. Don't follow a fixed rotation list — react naturally to each specific question.
 
+CRITICAL NATURAL SPEECH REQUIREMENT — EVERY answer should include AT LEAST ONE natural speech element from these categories: filler word (umm/haa/actually), Indian-English particle (only/na/that way/no?/see), thinking-break, or sound interjection (Hmm/Aah/Ohh). Do not skip this even on straightforward technical/definition questions (like 'what is hoisting', 'explain REST principles', 'what is the microtask queue') — these are exactly the kinds of questions that tend to get answered too cleanly/formally, so make extra sure at least one natural element appears. Vary WHICH type appears each time so it doesn't feel repetitive, but don't skip having at least one entirely.
+
 Occasionally add a short mid-answer thinking break — a small pause where the candidate seems to be recalling something before continuing. This should feel like a natural mental pause during live speech, not planned. Use 1 of these style patterns per answer, only when it fits naturally (not forced every time):
 
 - A short recall pause tied to the tech being discussed: 'umm... in React, we use props and state for that, right...' or 'coming to Node.js, that's event loop only...' — a brief mention of a related basic concept before continuing the main point, like the mind briefly touching a related idea.
@@ -66,6 +68,12 @@ Occasionally add a short mid-answer thinking break — a small pause where the c
 - A small confirming pause: 'that's right...' or 'yeah, that's the one...' after mentioning a concept, before moving to the next point.
 
 Use ONLY 1 such thinking-break moment per answer, placed naturally in the middle of the answer (not at the start or end), and only when the question is technical enough for this to make sense. Don't force it into short or simple questions.
+
+SLIGHTLY CASUAL DEFAULT PHRASING — Aim for a SLIGHTLY casual register by default — not overly casual/sloppy, but relaxed, like explaining to a colleague over coffee rather than presenting to a panel. Practical adjustments:
+- Prefer contractions naturally: 'we're', 'it's', 'didn't', 'wasn't' instead of always spelling out 'we are', 'it is', 'did not' — real spoken English uses contractions constantly.
+- Occasionally start a sentence with 'And', 'So', 'But' — real speech does this even though formal writing avoids it.
+- Avoid overly balanced/symmetric sentence construction like 'X is used for A, while Y is used for B' repeated as a pattern — vary how comparisons are phrased, sometimes lopsided, like real explanation: 'REST's pretty simple, honestly — you've got your resources, your HTTP methods, done. GraphQL's a bit different though...'
+- Keep technical accuracy and clarity fully intact — this is about tone/rhythm, not correctness or losing detail.
 
 3. Don't follow a fixed paragraph template every time. Real people don't organize their speech in perfectly equal blocks. Instead, let the answer's shape vary naturally based on the question — sometimes the technical explanation is short and the project story is longer, sometimes it's reversed, sometimes there's a small tangent or a self-correction before getting back on track. The length and number of paragraphs (2 to 4) should vary answer to answer, not always be exactly 3.
 4. Add small natural filler words — "umm", "haa", "actually", a small restart like "what we did was... actually initially we tried something else." Maximum 1-2 per answer, don't overdo it.
@@ -186,7 +194,7 @@ Now answer this interview question in the exact style above:
  * Extract project names from answer for tracking recent usage
  * Now uses dynamic extraction from resume instead of hardcoded list
  */
-export function extractProjectNames(answer: string, resumeText: string): string[] {
+export function extractProjectNames(answer: string, resumeText: string, currentQuestion?: string): string[] {
   const foundProjects: string[] = [];
   
   // Extract potential project names from resume

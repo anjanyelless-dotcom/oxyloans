@@ -227,6 +227,64 @@ function cleanupYouPOVMistakes(answer: string): string {
   return cleanedAnswer;
 }
 
+/**
+ * Lightweight self-check to verify answer quality
+ * Logs any issues with length or content filtering misses
+ */
+function selfCheckAnswer(answer: string, question: string): void {
+  const wordCount = answer.split(/\s+/).length;
+  const charCount = answer.length;
+  
+  // Check length constraints
+  if (wordCount < 150) {
+    console.warn(`⚠️ Answer too short: ${wordCount} words (target: 180-280 words) for question: "${question.substring(0, 50)}..."`);
+  } else if (wordCount > 300) {
+    console.warn(`⚠️ Answer too long: ${wordCount} words (target: 180-280 words) for question: "${question.substring(0, 50)}..."`);
+  }
+  
+  // Check for common content filter misses
+  const disallowedPhrases = [
+    'significantly',
+    'crucial',
+    'essentially',
+    'leverage',
+    'utilize',
+    'seamless',
+    'robust',
+    'facilitate',
+    'comprehensive',
+    'delve into',
+    'a real eye-opener',
+    'underestimated the complexity',
+    'a significant improvement'
+  ];
+  
+  const foundPhrases = disallowedPhrases.filter(phrase => 
+    answer.toLowerCase().includes(phrase.toLowerCase())
+  );
+  
+  if (foundPhrases.length > 0) {
+    console.warn(`⚠️ Content filter miss - found disallowed phrases: ${foundPhrases.join(', ')} in answer to: "${question.substring(0, 50)}..."`);
+  }
+  
+  // Check for 'you' POV mistakes
+  const youPatterns = [
+    /\byou configure\b/gi,
+    /\byou can\b/gi,
+    /\byou would\b/gi,
+    /\byou need to\b/gi,
+    /\byour service\b/gi,
+    /\byour system\b/gi
+  ];
+  
+  const foundYouPatterns = youPatterns.filter(pattern => pattern.test(answer));
+  if (foundYouPatterns.length > 0) {
+    console.warn(`⚠️ POV filter miss - found 'you' patterns in answer to: "${question.substring(0, 50)}..."`);
+  }
+  
+  console.log(`✅ Answer self-check: ${wordCount} words, ${charCount} characters for question: "${question.substring(0, 50)}..."`);
+}
+
 export class AskController {
   /**
    * Set or update the candidate profile
@@ -310,12 +368,14 @@ export class AskController {
       ];
 
       // Call OpenAI API
+      console.time('OpenAI API call');
       const response = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || "gpt-4o",
-        temperature: 0.85, // important: keeps it natural, not robotic
-        max_tokens: 400,
+        temperature: 0.65, // Reduced from 0.85 for more consistent answers
+        max_tokens: 200, // Reduced from 400 for faster responses
         messages
       });
+      console.timeEnd('OpenAI API call');
 
       const answer = response.choices[0].message.content;
 
@@ -341,7 +401,7 @@ export class AskController {
         conversationHistory = conversationHistory.slice(-12);
       }
 
-      // Extract and update recent projects used
+      // Extract and update recent projects used (with question context for relevance)
       const foundProjects = extractProjectNames(finalAnswer, currentProfile.resumeText);
       foundProjects.forEach(project => {
         if (currentProfile && !currentProfile.recentProjectsUsed.includes(project)) {
@@ -358,6 +418,111 @@ export class AskController {
         conversationHistory: conversationHistory
       });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Ask a question and get AI-generated answer with streaming
+   */
+  static async askStream(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { question, conversationHistory: clientHistory } = req.body as AskRequest;
+
+      if (!question || question.trim() === '') {
+        throw new APIError(400, 'INVALID_QUESTION', 'Question is required');
+      }
+
+      if (!currentProfile) {
+        throw new APIError(400, 'NO_PROFILE', 'No profile has been set. Call POST /api/interviews/profile first.');
+      }
+
+      // Set SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      // Use client conversation history if provided, otherwise use server history
+      const historyToUse = clientHistory || conversationHistory;
+
+      // Trim to last 4 messages (2 exchanges) for performance
+      const trimmedHistory = historyToUse.slice(-4);
+
+      // Build the prompt with trimmed conversation history
+      const prompt = buildAnswerPrompt(currentProfile, trimmedHistory).replace("{{USER_QUESTION}}", question);
+
+      // Build messages array for OpenAI with conversation context
+      const messages: Array<{role: 'system' | 'user', content: string}> = [
+        { role: "user", content: prompt }
+      ];
+
+      // Call OpenAI API with streaming
+      console.time('OpenAI Streaming API call');
+      const stream = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || "gpt-4o",
+        temperature: 0.65, // Reduced from 0.85 for more consistent answers
+        max_tokens: 200, // Reduced from 400 for faster responses
+        messages,
+        stream: true
+      });
+
+      let fullAnswer = '';
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullAnswer += content;
+          // Send each chunk to frontend
+          res.write(`data: ${JSON.stringify({ type: 'token', content })}\n\n`);
+        }
+      }
+
+      console.timeEnd('OpenAI Streaming API call');
+
+      // Apply content filtering to final answer only
+      const cleanedAnswer = cleanupBannedWords(fullAnswer);
+      const essayCleanedAnswer = cleanupEssayPhrases(cleanedAnswer);
+      const finalAnswer = cleanupYouPOVMistakes(essayCleanedAnswer);
+
+      // Run lightweight self-check for quality assurance
+      selfCheckAnswer(finalAnswer, question);
+
+      // Update server conversation history
+      conversationHistory.push({ role: 'user', content: question });
+      conversationHistory.push({ role: 'assistant', content: finalAnswer });
+
+      // Keep only last 8 messages (4 question-answer pairs) to manage memory
+      if (conversationHistory.length > 8) {
+        conversationHistory = conversationHistory.slice(-8);
+      }
+
+      // Extract and update recent projects used
+      const foundProjects = extractProjectNames(finalAnswer, currentProfile.resumeText);
+      foundProjects.forEach(project => {
+        if (currentProfile && !currentProfile.recentProjectsUsed.includes(project)) {
+          currentProfile.recentProjectsUsed.push(project);
+          // Keep only last 2 projects
+          currentProfile.recentProjectsUsed = currentProfile.recentProjectsUsed.slice(-2);
+        }
+      });
+
+      // Send final message with complete answer and metadata
+      res.write(`data: ${JSON.stringify({ 
+        type: 'done', 
+        answer: finalAnswer,
+        conversationHistory: conversationHistory,
+        recentProjectsUsed: currentProfile?.recentProjectsUsed || []
+      })}\n\n`);
+
+      res.end();
+    } catch (error) {
+      // Send error through SSE
+      res.write(`data: ${JSON.stringify({ 
+        type: 'error', 
+        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      })}\n\n`);
+      res.end();
       next(error);
     }
   }

@@ -1,3 +1,5 @@
+import type { Profile, ProfileInput } from '../validation/schemas';
+
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
 export class APIError extends Error {
@@ -79,14 +81,14 @@ export const apiClient = {
     }),
 
   // Simplified interview API
-  setProfile: async (profile: any) => 
+  setProfile: async (profile: ProfileInput) => 
     request('/interviews/profile', {
       method: 'POST',
       body: JSON.stringify(profile),
     }),
 
   getProfile: async () => 
-    request('/interviews/profile', {
+    request<Profile>('/interviews/profile', {
       method: 'GET',
     }),
 
@@ -100,4 +102,71 @@ export const apiClient = {
     request('/interviews/profile', {
       method: 'DELETE',
     }),
+
+  // Streaming interview API
+  askStream: async (question: string, conversationHistory?: Array<{role: 'user' | 'assistant', content: string}>, onToken?: (token: string) => void) => {
+    const url = `${BASE_URL}/interviews/ask-stream`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question, conversationHistory }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new APIError(response.status, errorData.code || 'STREAM_ERROR', errorData.message || 'Stream request failed');
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullAnswer = '';
+      let finalData: any = null;
+
+      if (!reader) {
+        throw new APIError(500, 'STREAM_ERROR', 'Response body is not readable');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data.trim() === '') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              
+              if (parsed.type === 'token' && onToken) {
+                onToken(parsed.content);
+                fullAnswer += parsed.content;
+              } else if (parsed.type === 'done') {
+                finalData = parsed;
+              } else if (parsed.type === 'error') {
+                throw new APIError(500, 'STREAM_ERROR', parsed.error);
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', data, e);
+            }
+          }
+        }
+      }
+
+      return finalData || { answer: fullAnswer };
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : 'Unable to connect to the server.';
+      throw new APIError(500, 'NETWORK_ERROR', message);
+    }
+  },
 };

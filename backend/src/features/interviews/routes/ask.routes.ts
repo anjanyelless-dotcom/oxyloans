@@ -12,7 +12,10 @@ router.get('/profile', AskController.getProfile);
 // Reset current profile
 router.delete('/profile', AskController.resetProfile);
 
-// Ask a question and get AI-generated answer
+// Ask a question and get AI-generated answer (non-streaming)
 router.post('/ask', AskController.ask);
+
+// Ask a question and get AI-generated answer (streaming)
+router.post('/ask-stream', AskController.askStream);
 
 export default router;

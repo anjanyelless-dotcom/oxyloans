@@ -1,97 +1,147 @@
 import { useState, useRef, useEffect } from 'react';
 import { apiClient } from './api/client';
+import { ProfileSchema, type Profile, type ProfileInput, type Message, type ConversationMessage } from './validation/schemas';
+import { z } from 'zod';
 
-interface Profile {
-  candidateName: string;
-  experienceYears: number;
-  currentCompany: string;
-  currentRole: string;
-  previousCompany: string;
-  previousRole: string;
-  targetCompany: string;
-  jobTitle: string;
-  interviewRound: string;
-  resumeText: string;
-  jobDescriptionText: string;
-}
-
-interface Message {
-  role: 'user' | 'ai';
-  content: string;
-  timestamp: Date;
-  questionId?: string; // For regenerate functionality
-}
-
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-function SimplifiedApp() {
+export default function SimplifiedApp() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [showSetup, setShowSetup] = useState(true);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showSetup, setShowSetup] = useState(true);
-  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
-  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
+
+  // Refs for voice recording
+  const isRecordingRef = useRef(false);
   const recognitionRef = useRef<any>(null);
-  const isManuallyStoppedRef = useRef(false);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accumulatedTranscriptRef = useRef('');
+  const silenceTimerRef = useRef<number | null>(null);
+  const isManuallyStoppedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load profile and messages from localStorage on mount
   useEffect(() => {
-    const savedProfile = localStorage.getItem('interviewProfile');
-    const savedMessages = localStorage.getItem('chatHistory');
-    const savedConversationHistory = localStorage.getItem('conversationHistory');
-    if (savedProfile) {
-      const parsedProfile = JSON.parse(savedProfile);
-      setProfile(parsedProfile);
-      setShowSetup(false);
+    const loadProfileAndResend = async () => {
+      const savedProfile = localStorage.getItem('interviewProfile');
+      const savedMessages = localStorage.getItem('chatHistory');
+      const savedConversationHistory = localStorage.getItem('conversationHistory');
       
-      // Re-send profile to backend to handle server restarts
-      apiClient.post('/interviews/profile', parsedProfile)
-        .then(() => console.log('Profile re-sent to backend'))
-        .catch(err => console.error('Failed to re-send profile to backend:', err));
-    }
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      // Convert timestamp strings back to Date objects
-      const messagesWithDates = parsedMessages.map((msg: any) => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      setMessages(messagesWithDates);
-    }
-    if (savedConversationHistory) {
-      setConversationHistory(JSON.parse(savedConversationHistory));
-    }
+      console.log('Loading saved data...', { 
+        hasProfile: !!savedProfile, 
+        hasMessages: !!savedMessages, 
+        hasHistory: !!savedConversationHistory 
+      });
+      
+      if (savedProfile) {
+        try {
+          const parsedProfile = JSON.parse(savedProfile);
+          console.log('Parsed profile from localStorage:', parsedProfile);
+          
+          // Validate the loaded profile with Zod schema
+          const validatedProfile = ProfileSchema.parse(parsedProfile);
+          setProfile(validatedProfile);
+          setShowSetup(false);
+          console.log('Profile validated and set successfully');
+          
+          // Re-send profile to backend to handle server restarts
+          try {
+            await apiClient.setProfile(validatedProfile);
+            console.log('Profile re-sent to backend successfully');
+          } catch (err) {
+            console.error('Failed to re-send profile to backend:', err);
+            // Don't clear profile or show error - backend reconnection failure shouldn't break the app
+            // The profile is still valid locally, just backend needs it again
+          }
+        } catch (err) {
+          console.error('Failed to validate saved profile:', err);
+          if (err instanceof z.ZodError) {
+            const errorMessages = err.issues.map((issue: any) => issue.message).join(', ');
+            console.error('Validation errors:', errorMessages);
+            setError('Invalid saved profile data: ' + errorMessages);
+          } else {
+            setError('Failed to validate saved profile');
+          }
+          // Only clear profile if validation actually fails
+          setProfile(null);
+          setShowSetup(true);
+          localStorage.removeItem('interviewProfile');
+          return;
+        }
+      } else {
+        console.log('No saved profile found, showing setup');
+        setShowSetup(true);
+      }
+      
+      if (savedMessages) {
+        try {
+          const parsedMessages = JSON.parse(savedMessages);
+          // Convert timestamp strings back to Date objects
+          const messagesWithDates = parsedMessages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp)
+          }));
+          setMessages(messagesWithDates);
+          console.log('Loaded', messagesWithDates.length, 'messages from localStorage');
+        } catch (err) {
+          console.error('Failed to load saved messages:', err);
+          // Don't block the app if messages fail to load
+        }
+      }
+      
+      if (savedConversationHistory) {
+        try {
+          setConversationHistory(JSON.parse(savedConversationHistory));
+          console.log('Loaded conversation history from localStorage');
+        } catch (err) {
+          console.error('Failed to load conversation history:', err);
+          // Don't block the app if history fails to load
+        }
+      }
+    };
+    
+    loadProfileAndResend();
   }, []);
 
   // Save profile to localStorage whenever it changes
   useEffect(() => {
     if (profile) {
-      localStorage.setItem('interviewProfile', JSON.stringify(profile));
+      try {
+        localStorage.setItem('interviewProfile', JSON.stringify(profile));
+        console.log('Profile saved to localStorage');
+      } catch (err) {
+        console.error('Failed to save profile to localStorage:', err);
+      }
+    } else {
+      // Only remove if explicitly set to null (not during initial load)
+      console.log('Profile is null, not saving to localStorage');
     }
   }, [profile]);
 
   // Save messages to localStorage whenever they change
   useEffect(() => {
     if (messages.length > 0) {
-      localStorage.setItem('chatHistory', JSON.stringify(messages));
+      try {
+        localStorage.setItem('chatHistory', JSON.stringify(messages));
+        console.log('Messages saved to localStorage');
+      } catch (err) {
+        console.error('Failed to save messages to localStorage:', err);
+      }
     }
   }, [messages]);
 
-  // Save conversation history to localStorage whenever it changes
+  // Save conversation history to localStorage whenever they change
   useEffect(() => {
     if (conversationHistory.length > 0) {
-      localStorage.setItem('conversationHistory', JSON.stringify(conversationHistory));
+      try {
+        localStorage.setItem('conversationHistory', JSON.stringify(conversationHistory));
+        console.log('Conversation history saved to localStorage');
+      } catch (err) {
+        console.error('Failed to save conversation history to localStorage:', err);
+      }
     }
   }, [conversationHistory]);
 
@@ -125,7 +175,7 @@ function SimplifiedApp() {
       console.log('Form data received:', formData);
       
       // Transform form data to match backend expectations
-      const profileData = {
+      const profileData: ProfileInput = {
         candidateName: formData.candidateName,
         experienceYears: formData.experienceYears,
         currentCompany: formData.currentCompany || '',
@@ -141,12 +191,22 @@ function SimplifiedApp() {
       
       console.log('Profile data to send:', profileData);
       
-      await apiClient.setProfile(profileData);
-      setProfile(profileData);
+      // Validate profile data with Zod schema before sending
+      const validatedProfile = ProfileSchema.parse(profileData);
+      console.log('Validated profile:', validatedProfile);
+      
+      await apiClient.setProfile(validatedProfile);
+      setProfile(validatedProfile);
       setShowSetup(false);
+      console.log('Profile set successfully, localStorage will be updated by useEffect');
     } catch (err: any) {
       console.error('Error setting profile:', err);
-      setError(err.message || 'Failed to set profile');
+      if (err instanceof z.ZodError) {
+        const errorMessages = err.issues.map((issue: any) => issue.message).join(', ');
+        setError('Invalid profile data: ' + errorMessages);
+      } else {
+        setError(err.message || 'Failed to set profile');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -172,8 +232,28 @@ function SimplifiedApp() {
       };
       setMessages(prev => [...prev, userMessage]);
 
-      // Call API with conversation history
-      const response: any = await apiClient.ask(currentQuestion, conversationHistory);
+      // Add empty AI message that will be filled with streaming content
+      const aiMessage: Message = {
+        role: 'ai',
+        content: '',
+        timestamp: new Date(),
+        questionId
+      };
+      setMessages(prev => [...prev, aiMessage]);
+
+      // Call streaming API with conversation history
+      const response: any = await apiClient.askStream(
+        currentQuestion, 
+        conversationHistory,
+        (token: string) => {
+          // Update the AI message content as tokens arrive
+          setMessages(prev => prev.map(msg => 
+            msg.questionId === questionId && msg.role === 'ai'
+              ? { ...msg, content: msg.content + token }
+              : msg
+          ));
+        }
+      );
 
       // Update conversation history
       const newHistory: ConversationMessage[] = [
@@ -182,15 +262,14 @@ function SimplifiedApp() {
         { role: 'assistant', content: response.answer }
       ];
       setConversationHistory(newHistory);
+      console.log('Conversation history updated:', newHistory);
 
-      // Add AI response
-      const aiMessage: Message = {
-        role: 'ai',
-        content: response.answer,
-        timestamp: new Date(),
-        questionId // Link to the question
-      };
-      setMessages(prev => [...prev, aiMessage]);
+      // Update the AI message with the final cleaned answer
+      setMessages(prev => prev.map(msg => 
+        msg.questionId === questionId && msg.role === 'ai'
+          ? { ...msg, content: response.answer }
+          : msg
+      ));
 
       setCurrentQuestion('');
       accumulatedTranscriptRef.current = '';
@@ -205,6 +284,36 @@ function SimplifiedApp() {
   const handleCopyAnswer = (answer: string) => {
     navigator.clipboard.writeText(answer);
     // You could add a toast notification here
+  };
+
+  const handleClearData = () => {
+    if (confirm('Are you sure you want to clear all saved data? This will remove your profile and conversation history.')) {
+      localStorage.removeItem('interviewProfile');
+      localStorage.removeItem('chatHistory');
+      localStorage.removeItem('conversationHistory');
+      setProfile(null);
+      setMessages([]);
+      setConversationHistory([]);
+      setShowSetup(true);
+      console.log('All data cleared from localStorage');
+    }
+  };
+
+  const handleDebugLocalStorage = () => {
+    const profile = localStorage.getItem('interviewProfile');
+    const messages = localStorage.getItem('chatHistory');
+    const history = localStorage.getItem('conversationHistory');
+    
+    console.log('=== LOCALSTORAGE DEBUG ===');
+    console.log('Profile exists:', !!profile);
+    console.log('Profile data:', profile ? JSON.parse(profile) : null);
+    console.log('Messages exist:', !!messages);
+    console.log('Messages count:', messages ? JSON.parse(messages).length : 0);
+    console.log('History exists:', !!history);
+    console.log('History count:', history ? JSON.parse(history).length : 0);
+    console.log('========================');
+    
+    alert(`LocalStorage Debug:\n- Profile: ${profile ? 'EXISTS' : 'MISSING'}\n- Messages: ${messages ? JSON.parse(messages).length + ' messages' : 'MISSING'}\n- History: ${history ? JSON.parse(history).length + ' entries' : 'MISSING'}\n\nCheck console for detailed data.`);
   };
 
   const handleRegenerateAnswer = async (originalQuestion: string, questionId: string) => {
@@ -224,8 +333,19 @@ function SimplifiedApp() {
         }
       }
 
-      // Call API again with the same question and updated conversation history
-      const response: any = await apiClient.ask(originalQuestion, conversationHistory);
+      // Call streaming API again with the same question and updated conversation history
+      const response: any = await apiClient.askStream(
+        originalQuestion, 
+        conversationHistory,
+        (token: string) => {
+          // Update the AI message content as tokens arrive
+          setMessages(prev => prev.map(msg => 
+            msg.questionId === questionId && msg.role === 'ai'
+              ? { ...msg, content: msg.content + token }
+              : msg
+          ));
+        }
+      );
 
       // Update conversation history
       const newHistory: ConversationMessage[] = [
@@ -234,15 +354,14 @@ function SimplifiedApp() {
         { role: 'assistant', content: response.answer }
       ];
       setConversationHistory(newHistory);
+      console.log('Conversation history updated after regeneration:', newHistory);
 
-      // Add new AI response with same questionId
-      const aiMessage: Message = {
-        role: 'ai',
-        content: response.answer,
-        timestamp: new Date(),
-        questionId // Keep same questionId for regeneration tracking
-      };
-      setMessages(prev => [...prev, aiMessage]);
+      // Update the AI message with the final cleaned answer
+      setMessages(prev => prev.map(msg => 
+        msg.questionId === questionId && msg.role === 'ai'
+          ? { ...msg, content: response.answer }
+          : msg
+      ));
 
       setCurrentQuestion('');
     } catch (err: any) {
@@ -270,135 +389,92 @@ function SimplifiedApp() {
   };
 
   const startRecording = () => {
-    try {
-      setTranscriptionError(''); 
-      setInterimTranscript('');
-      accumulatedTranscriptRef.current = '';
-      isManuallyStoppedRef.current = false;
-      
-      // Check if Web Speech API is supported
-      if (!('webkitSpeechRecognition' in window)) {
-        setTranscriptionError('Speech recognition is not supported in this browser. Please use Chrome.');
-        return;
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      setTranscriptionError('Speech recognition is not supported in this browser.');
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+
+    recognitionRef.current.onresult = (event: any) => {
+      let interimTranscript = '';
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      if (finalTranscript) {
+        accumulatedTranscriptRef.current += finalTranscript;
+        setCurrentQuestion(accumulatedTranscriptRef.current);
+      }
+
+      if (interimTranscript) {
+        setInterimTranscript(interimTranscript);
+      } else {
+        setInterimTranscript('');
+      }
+
+      // Reset silence timer when we get results
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
       }
       
-      // Clear previous text when starting new recording
-      setCurrentQuestion('');
-      accumulatedTranscriptRef.current = '';
-      
-      // Create speech recognition instance
-      const SpeechRecognition = (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognitionRef.current = recognition;
-      
-      recognition.continuous = true; // Keep listening until manually stopped
-      recognition.interimResults = true; // Show interim results for live feedback
-      recognition.lang = 'en-US';
-      
-      recognition.onstart = () => {
-        setIsRecording(true);
-        console.log('Speech recognition started');
-      };
-      
-      recognition.onresult = (event: any) => {
-        let interimText = '';
-        let finalText = '';
-        
-        // Process all results from this event
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          
-          if (event.results[i].isFinal) {
-            finalText += transcript + ' ';
-          } else {
-            interimText += transcript;
-          }
+      // Start new silence timer
+      silenceTimerRef.current = window.setTimeout(() => {
+        if (isRecordingRef.current && !isManuallyStoppedRef.current) {
+          stopRecording();
         }
-        
-        // Update accumulated transcript with final results
-        accumulatedTranscriptRef.current += finalText;
-        
-        // Update interim transcript
-        setInterimTranscript(interimText);
-        
-        // Update the input field with combined text
-        const combinedText = accumulatedTranscriptRef.current + interimText;
-        setCurrentQuestion(combinedText.trim());
-        
-        // Reset silence timer on speech detection
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-        }
-        
-        // Set new silence timer (3-4 seconds)
-        silenceTimerRef.current = setTimeout(() => {
-          if (!isManuallyStoppedRef.current) {
-            console.log('Silence detected, stopping recording');
-            stopRecording();
-          }
-        }, 3500); // 3.5 seconds of silence
-      };
-      
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-          setTranscriptionError('Microphone access denied. Please allow microphone access.');
-        } else if (event.error === 'no-speech') {
-          setTranscriptionError('No speech detected. Please try again.');
-        } else {
-          setTranscriptionError(`Speech recognition error: ${event.error}`);
-        }
-        stopRecording();
-      };
-      
-      recognition.onend = () => {
-        console.log('Speech recognition ended');
-        
-        // Auto-restart if not manually stopped and still supposed to be recording
-        if (!isManuallyStoppedRef.current && isRecording) {
-          console.log('Auto-restarting speech recognition');
-          try {
-            recognition.start();
-          } catch (error) {
-            console.error('Failed to auto-restart:', error);
-            setIsRecording(false);
-          }
-        } else {
-          setIsRecording(false);
-          // Clear interim text on final stop
-          setInterimTranscript('');
-        }
-      };
-      
-      recognition.start();
-      
-    } catch (error: any) {
-      setTranscriptionError('Failed to start speech recognition: ' + error.message);
+      }, 2000);
+    };
+
+    recognitionRef.current.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
+      setTranscriptionError('Speech recognition error: ' + event.error);
+      stopRecording();
+    };
+
+    recognitionRef.current.onend = () => {
+      if (isRecordingRef.current) {
+        isRecordingRef.current = false;
+      }
+    };
+
+    try {
+      recognitionRef.current.start();
+      isRecordingRef.current = true;
+      setTranscriptionError('');
+    } catch (error) {
+      console.error('Failed to start speech recognition:', error);
+      setTranscriptionError('Failed to start speech recognition');
     }
   };
 
   const stopRecording = () => {
-    isManuallyStoppedRef.current = true;
-    
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-    
     if (recognitionRef.current) {
+      isManuallyStoppedRef.current = true;
       recognitionRef.current.stop();
       recognitionRef.current = null;
+      isRecordingRef.current = false;
+      
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
     }
-    
-    setIsRecording(false);
-    setInterimTranscript('');
-    
-    // Final cleanup - set the complete accumulated text
-    setCurrentQuestion(accumulatedTranscriptRef.current.trim());
   };
 
   const toggleRecording = () => {
-    if (isRecording) {
+    if (isRecordingRef.current) {
       stopRecording();
     } else {
       startRecording();
@@ -416,11 +492,11 @@ function SimplifiedApp() {
               {error}
             </div>
           )}
-
+          
           <form onSubmit={(e) => {
             e.preventDefault();
             const formData = new FormData(e.target as HTMLFormElement);
-            const profile: Profile = {
+            const profile: ProfileInput = {
               candidateName: formData.get('candidateName') as string,
               experienceYears: parseInt(formData.get('experienceYears') as string),
               currentCompany: formData.get('currentCompany') as string,
@@ -458,88 +534,79 @@ function SimplifiedApp() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Current Company</label>
-                <input
-                  name="currentCompany"
-                  type="text"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Current company"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Current Role</label>
-                <input
-                  name="currentRole"
-                  type="text"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Current role"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Previous Company</label>
-                <input
-                  name="previousCompany"
-                  type="text"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Previous company"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Previous Role</label>
-                <input
-                  name="previousRole"
-                  type="text"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Previous role"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Target Company *</label>
-                <input
-                  name="targetCompany"
-                  type="text"
-                  required
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Company you're interviewing for"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Job Title *</label>
-                <input
-                  name="jobTitle"
-                  type="text"
-                  required
-                  className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Position you're applying for"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Current Company *</label>
+              <input
+                name="currentCompany"
+                type="text"
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Current company"
+              />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Interview Round</label>
-              <select
-                name="interviewRound"
-                defaultValue="Technical Round 1"
+              <label className="block text-sm font-medium text-slate-700 mb-1">Current Role *</label>
+              <input
+                name="currentRole"
+                type="text"
+                required
                 className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="Technical Round 1">Technical Round 1</option>
-                <option value="Technical Round 2">Technical Round 2</option>
-                <option value="Technical Round 3">Technical Round 3</option>
-                <option value="HR Round">HR Round</option>
-                <option value="Managerial Round">Managerial Round</option>
-                <option value="System Design Round">System Design Round</option>
-                <option value="Data Science Round">Data Science Round</option>
-                <option value="DevOps Round">DevOps Round</option>
-                <option value="QA Round">QA Round</option>
-              </select>
+                placeholder="Current role"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Previous Company</label>
+              <input
+                name="previousCompany"
+                type="text"
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Previous company (optional)"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Previous Role</label>
+              <input
+                name="previousRole"
+                type="text"
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Previous role (optional)"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Target Company *</label>
+              <input
+                name="targetCompany"
+                type="text"
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Company you're interviewing for"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Target Role *</label>
+              <input
+                name="jobTitle"
+                type="text"
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Role you're interviewing for"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Interview Round *</label>
+              <input
+                name="interviewRound"
+                type="text"
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., Technical Round 1"
+              />
             </div>
 
             <div>
@@ -549,12 +616,12 @@ function SimplifiedApp() {
                 required
                 rows={6}
                 className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Paste your full resume text here (projects, technologies, experience)..."
+                placeholder="Paste your resume here..."
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Job Description *</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Job Description Text *</label>
               <textarea
                 name="jobDescriptionText"
                 required
@@ -601,14 +668,8 @@ function SimplifiedApp() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => setShowSetup(true)}
-                className="bg-slate-600 hover:bg-slate-700 px-3 py-2 rounded text-sm transition-colors"
-              >
-                Edit Profile
-              </button>
-              <button
                 onClick={handleReset}
-                className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded text-sm transition-colors"
+                className="bg-slate-600 hover:bg-slate-700 px-3 py-2 rounded text-sm transition-colors"
               >
                 Reset
               </button>
@@ -625,6 +686,35 @@ function SimplifiedApp() {
                 <div><span className="text-slate-400">Previous:</span> {profile.previousCompany} ({profile.previousRole})</div>
                 <div><span className="text-slate-400">Target:</span> {profile.targetCompany} ({profile.jobTitle})</div>
                 <div><span className="text-slate-400">Round:</span> {profile.interviewRound}</div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-slate-600">
+                <button
+                  onClick={async () => {
+                    try {
+                      await apiClient.setProfile(profile);
+                      console.log('Profile manually re-sent to backend');
+                      // Optional: show success feedback
+                    } catch (err) {
+                      console.error('Failed to manually re-send profile:', err);
+                      setError('Failed to reconnect profile to backend');
+                    }
+                  }}
+                  className="w-full bg-slate-600 hover:bg-slate-500 px-3 py-2 rounded text-xs transition-colors mb-2"
+                >
+                  Reconnect Profile to Backend
+                </button>
+                <button
+                  onClick={handleDebugLocalStorage}
+                  className="w-full bg-slate-600 hover:bg-slate-500 px-3 py-2 rounded text-xs transition-colors mb-2"
+                >
+                  Debug LocalStorage
+                </button>
+                <button
+                  onClick={handleClearData}
+                  className="w-full bg-red-600 hover:bg-red-500 px-3 py-2 rounded text-xs transition-colors"
+                >
+                  Clear All Data
+                </button>
               </div>
             </div>
           )}
@@ -644,12 +734,11 @@ function SimplifiedApp() {
               key={index}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div
-                className={`max-w-[80%] rounded-lg p-4 ${
-                  message.role === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-800 border border-slate-200'
-                }`}
+              <div className={`${
+                message.role === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-800 border border-slate-200'
+              } rounded-lg p-4 max-w-[80%]`}
               >
                 <div className="text-sm font-medium mb-1 flex justify-between items-center">
                   <span>{message.role === 'user' ? 'You' : 'AI Candidate'}</span>
@@ -692,7 +781,14 @@ function SimplifiedApp() {
             <div className="flex justify-start">
               <div className="bg-slate-100 rounded-lg p-4 max-w-[80%] border border-slate-200">
                 <div className="text-sm font-medium mb-1">AI Candidate</div>
-                <div className="text-slate-500 italic">thinking...</div>
+                <div className="flex items-center gap-2 text-slate-500">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                  <span className="text-sm italic">thinking...</span>
+                </div>
               </div>
             </div>
           )}
@@ -719,43 +815,39 @@ function SimplifiedApp() {
             <button
               type="button"
               onClick={toggleRecording}
-              disabled={isLoading || isRecording}
+              disabled={isLoading || isRecordingRef.current}
               className={`p-3 rounded-lg transition-colors ${
-                isRecording 
-                  ? 'bg-red-500 text-white animate-pulse' 
+                isRecordingRef.current 
+                  ? 'bg-red-500 text-white hover:bg-red-600' 
                   : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
               } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={isRecording ? 'Stop recording' : 'Start recording'}
+              title={isRecordingRef.current ? 'Stop recording' : 'Start voice input'}
             >
-              🎤
+              {isRecordingRef.current ? '🎤 Stop' : '🎤 Voice'}
             </button>
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={currentQuestion}
-                onChange={(e) => setCurrentQuestion(e.target.value)}
-                placeholder={isRecording ? "Listening... (click mic to stop)" : "Type your interview question here..."}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isLoading}
-              />
-              {interimTranscript && isRecording && (
-                <div className="absolute top-full left-0 right-0 mt-1 px-4 py-2 bg-slate-100 text-slate-500 rounded text-sm italic">
-                  {interimTranscript}
-                </div>
-              )}
-            </div>
+            <input
+              type="text"
+              value={currentQuestion}
+              onChange={(e) => setCurrentQuestion(e.target.value)}
+              placeholder="Type your interview question here..."
+              disabled={isLoading}
+              className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+            />
             <button
               type="submit"
               disabled={isLoading || !currentQuestion.trim()}
               className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors"
             >
-              Ask
+              {isLoading ? 'Sending...' : 'Send'}
             </button>
           </div>
+          {interimTranscript && (
+            <div className="text-sm text-slate-500 mt-2 italic">
+              Hearing: {interimTranscript}
+            </div>
+          )}
         </form>
       </div>
     </div>
   );
 }
-
-export default SimplifiedApp;
