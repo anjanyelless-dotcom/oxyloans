@@ -14,6 +14,7 @@ export default function SimplifiedApp() {
   const [error, setError] = useState('');
   const [transcriptionError, setTranscriptionError] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
+  const [rawTranscript, setRawTranscript] = useState('');
 
   // Refs for voice recording
   const isRecordingRef = useRef(false);
@@ -21,6 +22,7 @@ export default function SimplifiedApp() {
   const fullTranscriptRef = useRef('');
   const shouldBeListeningRef = useRef(false);
   const restartAttemptsRef = useRef(0);
+  const isManuallyEditingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load profile and messages from localStorage on mount
@@ -155,6 +157,7 @@ export default function SimplifiedApp() {
     return () => {
       shouldBeListeningRef.current = false;
       fullTranscriptRef.current = '';
+      isManuallyEditingRef.current = false;
       
       if (recognitionRef.current) {
         recognitionRef.current.stop();
@@ -270,6 +273,7 @@ export default function SimplifiedApp() {
       setCurrentQuestion('');
       fullTranscriptRef.current = '';
       setInterimTranscript('');
+      isManuallyEditingRef.current = false;
     } catch (err: any) {
       setError(err.message || 'Failed to get answer');
     } finally {
@@ -291,6 +295,7 @@ export default function SimplifiedApp() {
       setMessages([]);
       setConversationHistory([]);
       setShowSetup(true);
+      isManuallyEditingRef.current = false;
       console.log('All data cleared from localStorage');
     }
   };
@@ -361,6 +366,7 @@ export default function SimplifiedApp() {
 
       setCurrentQuestion('');
       fullTranscriptRef.current = '';
+      isManuallyEditingRef.current = false;
     } catch (err: any) {
       setError(err.message || 'Failed to regenerate answer');
     } finally {
@@ -380,6 +386,7 @@ export default function SimplifiedApp() {
       localStorage.removeItem('interviewProfile');
       localStorage.removeItem('chatHistory');
       localStorage.removeItem('conversationHistory');
+      isManuallyEditingRef.current = false;
     } catch (err: any) {
       setError(err.message || 'Failed to reset profile');
     }
@@ -410,7 +417,10 @@ export default function SimplifiedApp() {
         }
       }
       
-      onTranscriptUpdate(fullTranscriptRef.current, interim);
+      // Only update the raw transcript box if user is not manually editing
+      if (!isManuallyEditingRef.current) {
+        onTranscriptUpdate(fullTranscriptRef.current, interim);
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -471,9 +481,10 @@ export default function SimplifiedApp() {
     shouldBeListeningRef.current = true;
     restartAttemptsRef.current = 0;
     fullTranscriptRef.current = '';
+    isManuallyEditingRef.current = false;
     
     const recognition = createRecognition((full: string, interim: string) => {
-      setCurrentQuestion(full + interim);
+      setRawTranscript(full + interim);
       setInterimTranscript(interim);
     });
     
@@ -493,6 +504,7 @@ export default function SimplifiedApp() {
 
   const stopListening = () => {
     shouldBeListeningRef.current = false;
+    isManuallyEditingRef.current = false;
     
     if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -500,7 +512,39 @@ export default function SimplifiedApp() {
     }
     
     isRecordingRef.current = false;
-    // Keep the transcript so the user can see what was recorded
+    // Keep the transcript in the top box
+  };
+
+  const moveToQuestion = () => {
+    setCurrentQuestion(rawTranscript.trim());
+    setRawTranscript('');
+    fullTranscriptRef.current = '';
+    setInterimTranscript('');
+    isManuallyEditingRef.current = false;
+  };
+
+  const clearRawTranscript = () => {
+    setRawTranscript('');
+    fullTranscriptRef.current = '';
+    setInterimTranscript('');
+    isManuallyEditingRef.current = false;
+  };
+
+  const clearCurrentQuestion = () => {
+    setCurrentQuestion('');
+  };
+
+  const handleRawTranscriptFocus = () => {
+    if (isRecordingRef.current) {
+      isManuallyEditingRef.current = true;
+    }
+  };
+
+  const handleRawTranscriptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setRawTranscript(e.target.value);
+    if (isRecordingRef.current) {
+      isManuallyEditingRef.current = true;
+    }
   };
 
   const toggleRecording = () => {
@@ -509,8 +553,9 @@ export default function SimplifiedApp() {
     } else {
       // Clear previous transcript when starting fresh
       fullTranscriptRef.current = '';
-      setCurrentQuestion('');
+      setRawTranscript('');
       setInterimTranscript('');
+      isManuallyEditingRef.current = false;
       startListening();
     }
   };
@@ -846,41 +891,103 @@ export default function SimplifiedApp() {
             </div>
           )}
           
-          <div className="flex gap-2">
+          {/* Top Box - Raw Transcript (editable workspace) */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-slate-500 font-medium">Raw Transcript (editable workspace)</label>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <textarea
+                  value={rawTranscript}
+                  onChange={handleRawTranscriptChange}
+                  onFocus={handleRawTranscriptFocus}
+                  placeholder="Click mic and start speaking... edit here to clean up your text"
+                  className="w-full px-3 py-2 pr-20 border border-slate-200 rounded-lg bg-slate-50 text-slate-700 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    disabled={isLoading}
+                    className={`text-sm px-2 py-1 rounded transition-colors ${
+                      isRecordingRef.current 
+                        ? 'bg-red-500 text-white hover:bg-red-600' 
+                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                    } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    title={isRecordingRef.current ? 'Stop recording' : 'Start voice input'}
+                  >
+                    {isRecordingRef.current ? '🎤' : '🎤'}
+                  </button>
+                  {rawTranscript && (
+                    <button
+                      type="button"
+                      onClick={clearRawTranscript}
+                      className="text-sm text-slate-400 hover:text-slate-600 transition-colors px-1"
+                      title="Clear transcript"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            {interimTranscript && !isManuallyEditingRef.current && (
+              <div className="text-xs text-slate-400 mt-1 italic">
+                Hearing: {interimTranscript}
+              </div>
+            )}
+          </div>
+
+          {/* Move to Question Button */}
+          <div className="flex justify-center my-2">
             <button
               type="button"
-              onClick={toggleRecording}
-              disabled={isLoading || isRecordingRef.current}
-              className={`p-3 rounded-lg transition-colors ${
-                isRecordingRef.current 
-                  ? 'bg-red-500 text-white hover:bg-red-600' 
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={isRecordingRef.current ? 'Stop recording' : 'Start voice input'}
+              onClick={moveToQuestion}
+              disabled={!rawTranscript.trim()}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              title="Move transcript to question box"
             >
-              {isRecordingRef.current ? '🎤 Stop' : '🎤 Voice'}
-            </button>
-            <input
-              type="text"
-              value={currentQuestion}
-              onChange={(e) => setCurrentQuestion(e.target.value)}
-              placeholder="Type your interview question here..."
-              disabled={isLoading}
-              className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !currentQuestion.trim()}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors"
-            >
-              {isLoading ? 'Sending...' : 'Send'}
+              <span>↑</span>
+              <span>Move to Question</span>
             </button>
           </div>
-          {interimTranscript && (
-            <div className="text-sm text-slate-500 mt-2 italic">
-              Hearing: {interimTranscript}
+
+          {/* Bottom Box - Your Question (final) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-slate-500 font-medium">Your Question (final, gets sent)</label>
             </div>
-          )}
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={currentQuestion}
+                  onChange={(e) => setCurrentQuestion(e.target.value)}
+                  placeholder="Your final question will appear here..."
+                  disabled={isLoading}
+                  className="w-full px-4 py-2 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                />
+                {currentQuestion && (
+                  <button
+                    type="button"
+                    onClick={clearCurrentQuestion}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                    title="Clear question"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={isLoading || !currentQuestion.trim()}
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition-colors"
+              >
+                {isLoading ? 'Sending...' : 'Send'}
+              </button>
+            </div>
+          </div>
         </form>
       </div>
     </div>
