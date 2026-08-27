@@ -32,9 +32,9 @@ export function InterviewSession({
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col h-[calc(100vh-4rem)] border border-slate-200 bg-white rounded-lg shadow-sm">
+    <div className="w-full flex flex-col h-[calc(100vh-2rem)] border border-slate-200 bg-white rounded-lg shadow-sm">
       {/* Session Metadata Header */}
-      <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+      <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
         <div>
           <h2 className="text-lg font-bold text-slate-800">
             {context.target.role} Mock Interview
@@ -52,7 +52,7 @@ export function InterviewSession({
       </div>
 
       {/* Conversation Thread Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 min-h-0">
         {context.history.map((turn, index) => {
           const isInterviewer = turn.role === 'interviewer';
           

@@ -43,7 +43,7 @@ export function SessionSetupForm({
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto p-8 bg-white border border-slate-200 rounded-lg shadow-sm">
+    <div className="w-full p-8 bg-white rounded-lg shadow-sm">
       <h2 className="text-2xl font-bold text-slate-800 mb-2">AI Interview Coach</h2>
       <p className="text-slate-500 mb-6">Enter your profile information and target job details to start a mock interview session.</p>
 

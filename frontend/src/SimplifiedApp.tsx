@@ -566,8 +566,8 @@ export default function SimplifiedApp() {
 
   if (showSetup) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8 px-4 flex items-center justify-center font-sans">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-2xl w-full">
+      <div className="min-h-screen bg-slate-50 font-sans p-4">
+        <div className="bg-white w-full min-h-[calc(100vh-2rem)] p-8 rounded-lg shadow-sm">
           <h1 className="text-2xl font-bold mb-6 text-slate-800">AI Interview Answer Coach</h1>
           
           {error && (
@@ -728,10 +728,10 @@ export default function SimplifiedApp() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4 flex items-center justify-center font-sans">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl h-[80vh] flex flex-col">
+    <div className="min-h-screen bg-slate-50 font-sans p-4">
+      <div className="bg-white w-full h-[calc(100vh-2rem)] flex flex-col rounded-lg shadow-sm">
         {/* Header with Profile Dropdown */}
-        <div className="bg-slate-800 text-white p-4 rounded-t-lg">
+        <div className="bg-slate-800 text-white p-4 rounded-t-lg flex-shrink-0">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
               <div>
@@ -804,7 +804,7 @@ export default function SimplifiedApp() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={messagesEndRef}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0" ref={messagesEndRef}>
           {messages.length === 0 && (
             <div className="text-center text-slate-500 py-8">
               <p className="text-lg mb-2">👋 Welcome to your interview practice!</p>
@@ -888,7 +888,7 @@ export default function SimplifiedApp() {
         )}
 
         {/* Input */}
-        <form onSubmit={handleAsk} className="p-4 border-t border-slate-200">
+        <form onSubmit={handleAsk} className="p-4 border-t border-slate-200 flex-shrink-0 rounded-b-lg">
           {transcriptionError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 mb-3 rounded text-sm">
               {transcriptionError}

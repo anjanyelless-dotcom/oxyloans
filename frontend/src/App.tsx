@@ -17,7 +17,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-50 py-8 px-4 flex items-center justify-center font-sans">
+      <div className="min-h-screen bg-slate-50 font-sans p-4">
         {!context ? (
           <SessionSetupForm
             onSubmit={startInterview}
